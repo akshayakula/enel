@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC Viewer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="header">
+        <div>
+          <h1>4-Camera Monitor Wall</h1>
+          <p>
+            This dashboard embeds four MediaMTX WebRTC viewers and displays
+            `cam1` through `cam4` simultaneously in a 2x2 layout.
+          </p>
+        </div>
+        <div class="pill mono" id="serverStatus">Loading...</div>
+      </section>
+
+      <section class="grid" id="videoGrid"></section>
+    </main>
+
+    <script src="/mediamtx/cam1/reader.js"></script>
+    <script src="/viewer.js"></script>
+  </body>
+</html>

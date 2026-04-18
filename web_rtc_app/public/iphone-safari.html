@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>iPhone Safari Publisher</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="header">
+        <div>
+          <h1>iPhone Safari Publisher</h1>
+          <p>
+            Video-only publisher for iPhone Safari. Choose a stream slot and
+            send the camera feed directly to the local WHIP endpoint.
+          </p>
+        </div>
+        <div class="pill mono" id="publishStatus">Idle</div>
+      </section>
+
+      <section class="stack">
+        <article class="panel">
+          <div class="controls" id="streamButtons"></div>
+          <p>
+            Active stream:
+            <span class="mono" id="activeStream">none</span>
+          </p>
+          <ul class="meta-list">
+            <li>This app requests camera access only. Audio is explicitly disabled.</li>
+            <li>Use Safari on iPhone for the best compatibility with secure local camera capture.</li>
+            <li>When you are done, tap Stop so the WHIP session is torn down cleanly.</li>
+          </ul>
+          <div class="controls">
+            <button class="button" id="stopButton" disabled>Stop Stream</button>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-header">
+            <div class="card-title">Local Preview</div>
+            <div class="status" id="cameraStatus">Waiting for camera</div>
+          </div>
+          <video id="localVideo" autoplay playsinline muted></video>
+        </article>
+      </section>
+    </main>
+
+    <script src="/mediamtx/cam1/publisher.js"></script>
+    <script src="/iphone-safari.js"></script>
+  </body>
+</html>

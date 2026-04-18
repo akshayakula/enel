@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Raspberry Pi Publisher</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="header">
+        <div>
+          <h1>Raspberry Pi Publisher</h1>
+          <p>
+            Dedicated setup app for Raspberry Pis that publish over WHIP. These
+            streams are video-only, with no audio track expected or required.
+          </p>
+        </div>
+        <div class="pill mono" id="raspiHostLabel">Loading...</div>
+      </section>
+
+      <section class="grid" id="raspiCards"></section>
+    </main>
+
+    <script src="/raspi.js"></script>
+  </body>
+</html>

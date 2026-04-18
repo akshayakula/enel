@@ -1,0 +1,13 @@
+webrtcAdditionalHosts:
+  - 127.0.0.1
+  - localhost
+  - 192.168.1.7
+
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+
+paths:
+  cam1:
+  cam2:
+  cam3:
+  cam4:
