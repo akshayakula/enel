@@ -5,3 +5,4 @@ certs/*.pem
 mediamtx.log
 exports/
 recordings/
+video_to_gaussian_splat/workspaces/
