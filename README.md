@@ -21,6 +21,7 @@ According to the current official MediaMTX docs, WHIP publishing uses URLs like 
 
 - `scripts/start-mediamtx.sh` runs MediaMTX directly on the laptop.
 - `mediamtx/mediamtx.yml` reserves the `cam1` to `cam4` paths.
+- `mediamtx/mediamtx.yml` also records all streams to disk as fMP4 and exposes the playback server on port `9996`.
 - `server.js` serves the dashboard plus two separate publisher apps on port `3000`.
 - `web_rtc_app/public/viewer.html` embeds the four MediaMTX WebRTC viewers.
 - `web_rtc_app/public/iphone-safari.html` is the dedicated iPhone Safari video-only publisher.
@@ -78,6 +79,31 @@ http://LAPTOP_IP:8889/cam4/whip
 The checked-in `mediamtx/mediamtx.yml` includes `127.0.0.1` and `localhost` in `webrtcAdditionalHosts`, but for the actual LAN deployment you should add the laptop's LAN IP there too, like `192.168.1.50`. That recommendation comes directly from the MediaMTX WebRTC connectivity guidance.
 
 In this repo, we are intentionally not using Docker for MediaMTX. Host-native MediaMTX works better for LAN-facing WebRTC because the ICE ports are exposed directly by the laptop instead of being forwarded through a VM/container layer.
+
+## Recording and export
+
+Per the current official MediaMTX docs, recording is supported directly in the server by enabling `record: yes`, choosing a `recordPath`, and using either `fmp4` or `mpegts`. Playback can also be enabled on port `9996`, and recordings can be downloaded back out as `mp4` with the playback server. Sources:
+
+- [MediaMTX: Record streams to disk](https://mediamtx.org/docs/usage/record)
+- [MediaMTX: Playback recorded streams](https://mediamtx.org/docs/usage/playback)
+
+This repo now records each camera stream automatically into `./recordings`.
+
+Recommended export options:
+
+1. Raw upload for Modal / Runpod:
+   ```bash
+   ./scripts/package-recordings.sh
+   ```
+   This creates a `.tar.gz` archive of the raw fMP4 recording tree plus a manifest file. This is the best choice if you want cloud workers to do their own stitching, alignment, or transcoding.
+
+2. Consolidated MP4s for quick review or downstream jobs:
+   ```bash
+   ./scripts/export-latest-mp4s.sh
+   ```
+   This asks the MediaMTX playback server for the latest recorded span of each camera and writes `cam1.mp4` through `cam4.mp4` into `./exports/latest-mp4`.
+
+The raw fMP4 recordings preserve more structure and are the better default handoff format for later processing. The MP4 export is more convenient for inspection and simple batch pipelines.
 
 ## iPhone Safari app
 

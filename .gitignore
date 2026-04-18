@@ -3,3 +3,5 @@ node_modules/
 npm-debug.log*
 certs/*.pem
 mediamtx.log
+exports/
+recordings/

@@ -1,3 +1,6 @@
+playback: yes
+playbackAddress: :9996
+
 webrtcAdditionalHosts:
   - 127.0.0.1
   - localhost
@@ -5,6 +8,14 @@ webrtcAdditionalHosts:
 
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189
+
+pathDefaults:
+  record: yes
+  recordPath: ./recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 30s
+  recordDeleteAfter: 0s
 
 paths:
   cam1:
