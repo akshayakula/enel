@@ -20,6 +20,32 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, protocol: "https" });
 });
 
+const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
+
+app.get("/api/next-slot", async (_req, res) => {
+  try {
+    const response = await fetch("http://127.0.0.1:9997/v3/paths/list");
+    if (!response.ok) {
+      res.status(502).json({ error: `mediamtx api ${response.status}` });
+      return;
+    }
+    const body = await response.json();
+    const busy = new Set(
+      (body.items || [])
+        .filter((p) => p.ready === true)
+        .map((p) => p.name),
+    );
+    const free = STREAM_SLOTS.find((id) => !busy.has(id));
+    if (!free) {
+      res.status(503).json({ error: "all slots busy", busy: [...busy] });
+      return;
+    }
+    res.json({ streamId: free, busy: [...busy] });
+  } catch (err) {
+    res.status(502).json({ error: String(err) });
+  }
+});
+
 app.get("/viewer", (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "viewer.html"));
 });

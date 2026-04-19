@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+# enel NeoPixel 16-ring lifecycle indicator.
+# Ring hardware: SK6812 RGBW 16-pixel ring (W28666-C). 4 bytes/LED, GRBW order.
+# LED 0 is physical north. Brightness is hard-capped; colors are gamma-corrected.
+import math
+import signal
+import subprocess
+import sys
+import time
+
+from rpi_ws281x import PixelStrip, Color, ws
+
+NUM_LEDS     = 16
+GPIO_PIN     = 18      # PWM0 — requires dtparam=audio=off
+LED_FREQ_HZ  = 800000
+LED_DMA      = 10
+LED_INVERT   = False
+LED_CHANNEL  = 0
+LED_STRIP    = ws.SK6812_STRIP_GRBW  # RGBW ring (4 bytes/LED)
+MAX_BRIGHT   = 32      # hard cap (~12.5%) — safe off Pi 5V rail
+GAMMA        = 2.2
+NORTH_LED    = 0
+
+
+def gamma_byte(v):
+    v = max(0.0, min(1.0, v))
+    return int(round((v ** GAMMA) * 255))
+
+
+def rgb(r, g, b, scale=1.0):
+    return Color(gamma_byte(r * scale), gamma_byte(g * scale), gamma_byte(b * scale))
+
+
+def wifi_up():
+    try:
+        with open("/sys/class/net/wlan0/operstate") as f:
+            return f.read().strip() == "up"
+    except OSError:
+        return False
+
+
+def streamer_active():
+    return subprocess.run(["systemctl", "is-active", "--quiet", "streamer.service"]).returncode == 0
+
+
+def streamer_failed():
+    return subprocess.run(["systemctl", "is-failed", "--quiet", "streamer.service"]).returncode == 0
+
+
+def clear(strip):
+    for i in range(NUM_LEDS):
+        strip.setPixelColor(i, 0)
+    strip.show()
+
+
+def boot_wipe(strip, duration=1.2):
+    steps = NUM_LEDS
+    step_time = duration * 0.6 / steps
+    for i in range(steps):
+        strip.setPixelColor(i, rgb(1, 1, 1, 0.5))
+        strip.show()
+        time.sleep(step_time)
+    fade_steps = 20
+    for s in range(fade_steps, 0, -1):
+        lvl = (s / fade_steps) * 0.5
+        for i in range(NUM_LEDS):
+            strip.setPixelColor(i, rgb(1, 1, 1, lvl))
+        strip.show()
+        time.sleep(duration * 0.4 / fade_steps)
+    clear(strip)
+
+
+def render(strip, mode, t):
+    if mode == "wifi_wait":
+        head = int((t * 8) % NUM_LEDS)
+        for i in range(NUM_LEDS):
+            d = min((i - head) % NUM_LEDS, (head - i) % NUM_LEDS)
+            lvl = max(0.0, 1.0 - d / 3.0) * 0.6
+            strip.setPixelColor(i, rgb(1.0, 0.45, 0.0, lvl))
+    elif mode == "connecting":
+        head = int((t * 10) % NUM_LEDS)
+        for i in range(NUM_LEDS):
+            d = min((i - head) % NUM_LEDS, (head - i) % NUM_LEDS)
+            lvl = max(0.0, 1.0 - d / 2.5) * 0.7
+            strip.setPixelColor(i, rgb(0.0, 0.8, 1.0, lvl))
+    elif mode == "idle":
+        pulse = 0.3 + 0.3 * (0.5 + 0.5 * math.sin(t * 2.0))
+        for i in range(NUM_LEDS):
+            if i == NORTH_LED:
+                strip.setPixelColor(i, rgb(0.0, 0.9, 1.0, pulse))
+            else:
+                strip.setPixelColor(i, 0)
+    elif mode == "warn":
+        b = 0.15 + 0.45 * (0.5 + 0.5 * math.sin(t * 3.5))
+        for i in range(NUM_LEDS):
+            strip.setPixelColor(i, rgb(1.0, 0.0, 0.0, b))
+    elif mode == "fatal":
+        on = int(t * 4) % 2 == 0
+        lvl = 0.9 if on else 0.0
+        for i in range(NUM_LEDS):
+            strip.setPixelColor(i, rgb(1.0, 0.0, 0.0, lvl))
+    else:
+        clear(strip)
+        return
+    strip.show()
+
+
+def pick_mode():
+    if not wifi_up():
+        return "wifi_wait"
+    if streamer_failed():
+        return "warn"
+    if streamer_active():
+        return "idle"
+    return "connecting"
+
+
+def main():
+    strip = PixelStrip(NUM_LEDS, GPIO_PIN, LED_FREQ_HZ, LED_DMA,
+                       LED_INVERT, MAX_BRIGHT, LED_CHANNEL, LED_STRIP)
+    strip.begin()
+
+    # Make sure the LEDs are dark on clean exit — systemd sends SIGTERM at
+    # shutdown and otherwise the ring holds its last rendered frame until
+    # power is physically removed.
+    def _exit(_sig, _frame):
+        try:
+            clear(strip)
+        finally:
+            sys.exit(0)
+    signal.signal(signal.SIGTERM, _exit)
+    signal.signal(signal.SIGINT, _exit)
+
+    boot_wipe(strip)
+    start = time.monotonic()
+    last_state_check = 0.0
+    mode = "wifi_wait"
+    try:
+        while True:
+            now = time.monotonic()
+            if now - last_state_check > 0.5:
+                mode = pick_mode()
+                last_state_check = now
+            render(strip, mode, now - start)
+            time.sleep(1.0 / 60.0)
+    except Exception:
+        t0 = time.monotonic()
+        while True:
+            render(strip, "fatal", time.monotonic() - t0)
+            time.sleep(1.0 / 30.0)
+
+
+if __name__ == "__main__":
+    main()
