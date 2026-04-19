@@ -155,9 +155,47 @@ class Handler(BaseHTTPRequestHandler):
             })
             return self._json(200, {"ok": True})
 
+        if self.path == "/ring/compass":
+            body = self._read_body()
+            try:
+                bearing = float(body.get("bearing_deg", 0.0)) % 360.0
+            except (TypeError, ValueError):
+                bearing = 0.0
+            try:
+                width = int(body.get("width", 3))
+            except (TypeError, ValueError):
+                width = 3
+            width = max(1, min(8, width))
+            _write_override({
+                "mode":         "compass",
+                "bearing_deg":  bearing,
+                "width":        width,
+                "r":            _clamp_byte(body.get("r", 0)),
+                "g":            _clamp_byte(body.get("g", 0)),
+                "b":            _clamp_byte(body.get("b", 0)),
+                "expires_at":   time.time() + _clamp_ttl(body.get("ttl", 300)),
+            })
+            return self._json(200, {"ok": True, "bearing_deg": bearing})
+
         if self.path == "/ring/clear":
             _clear_override()
             return self._json(200, {"ok": True})
+
+        if self.path == "/system/poweroff":
+            # Service runs as root, so this works without sudo. Delay so the
+            # HTTP response gets flushed before the kernel halts.
+            subprocess.Popen(
+                ["/bin/sh", "-c", "sleep 1 && /sbin/poweroff"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return self._json(200, {"ok": True, "action": "poweroff"})
+
+        if self.path == "/system/reboot":
+            subprocess.Popen(
+                ["/bin/sh", "-c", "sleep 1 && /sbin/reboot"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            return self._json(200, {"ok": True, "action": "reboot"})
 
         return self._json(404, {"error": "not found"})
 

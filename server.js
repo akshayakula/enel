@@ -5,6 +5,21 @@ const https = require("https");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 
+// Load .env at startup (no dotenv dep needed — tiny parser).
+(() => {
+  try {
+    const envPath = path.join(__dirname, ".env");
+    if (!fs.existsSync(envPath)) return;
+    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
+      if (!m) continue;
+      let val = m[2];
+      if (/^".*"$/.test(val) || /^'.*'$/.test(val)) val = val.slice(1, -1);
+      if (process.env[m[1]] === undefined) process.env[m[1]] = val;
+    }
+  } catch (err) { console.warn(".env parse skipped:", err.message); }
+})();
+
 const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
@@ -15,7 +30,7 @@ const CERT_PATH = path.join(CERT_DIR, "dev-cert.pem");
 const KEY_PATH = path.join(CERT_DIR, "dev-key.pem");
 
 app.use(express.static(PUBLIC_DIR));
-app.use(express.json({ limit: "32kb" }));
+app.use(express.json({ limit: "8mb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, protocol: "https" });
@@ -83,6 +98,118 @@ app.all("/api/pi/:id/:path(*)", async (req, res) => {
     res.status(502).json({ error: String(err && err.message ? err.message : err) });
   } finally {
     clearTimeout(timer);
+  }
+});
+
+// -----------------------------------------------------------------------
+// AI endpoints. Key stays server-side; browser posts frames + short prompts.
+// -----------------------------------------------------------------------
+const OPENAI_API_KEY    = process.env.OPENAI_API_KEY || "";
+const AI_VISION_MODEL   = process.env.AI_VISION_MODEL || "gpt-4o-mini";
+const AI_TEXT_MODEL     = process.env.AI_TEXT_MODEL   || "gpt-4o-mini";
+const AI_TIMEOUT_MS     = 20000;
+
+async function callOpenAI(body) {
+  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set");
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), AI_TIMEOUT_MS);
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: ctl.signal,
+      headers: {
+        "content-type": "application/json",
+        "authorization": `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await r.text();
+    if (!r.ok) throw new Error(`openai ${r.status}: ${text.slice(0, 300)}`);
+    return JSON.parse(text);
+  } finally { clearTimeout(t); }
+}
+
+app.get("/api/ai/status", (_req, res) => {
+  res.json({ configured: Boolean(OPENAI_API_KEY), vision: AI_VISION_MODEL, text: AI_TEXT_MODEL });
+});
+
+// Per-frame scene description. POST { cam, image_b64, prompt? } -> { text }
+app.post("/api/ai/describe", async (req, res) => {
+  try {
+    const { cam, image_b64, prompt } = req.body || {};
+    if (!image_b64) return res.status(400).json({ error: "image_b64 required" });
+    const sys = "You are an aerial/ground ops analyst. Given one video frame, " +
+      "reply in ONE short sentence (≤ 18 words): describe the dominant subject, " +
+      "motion, and anything notable. No hedging, no preamble.";
+    const userPrompt = prompt || "What is in this frame right now?";
+    const data = await callOpenAI({
+      model: AI_VISION_MODEL,
+      max_tokens: 80,
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: [
+          { type: "text", text: `${userPrompt} (cam: ${cam || "?"})` },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image_b64}`, detail: "low" } },
+        ] },
+      ],
+    });
+    const text = data.choices?.[0]?.message?.content?.trim() || "";
+    res.json({ cam, text });
+  } catch (err) {
+    res.status(502).json({ error: String(err.message || err) });
+  }
+});
+
+// Swarm sitrep — caller sends one or more frames, gets unified report + per-cam lines.
+app.post("/api/ai/sitrep", async (req, res) => {
+  try {
+    const frames = Array.isArray(req.body?.frames) ? req.body.frames.slice(0, 4) : [];
+    if (!frames.length) return res.status(400).json({ error: "frames required" });
+    const content = [
+      { type: "text", text:
+        "You are coordinating a 4-unit sensor swarm (1 airborne drone + ground units). " +
+        "Produce: (1) a one-line headline of the overall situation, " +
+        "(2) per-cam one-line observation labeled by cam id. " +
+        "Keep it terse, mission-style. No markdown." },
+    ];
+    for (const f of frames) {
+      if (!f?.image_b64) continue;
+      content.push({ type: "text", text: `— ${f.cam || "?"}:` });
+      content.push({ type: "image_url", image_url: {
+        url: `data:image/jpeg;base64,${f.image_b64}`, detail: "low",
+      }});
+    }
+    const data = await callOpenAI({
+      model: AI_VISION_MODEL,
+      max_tokens: 240,
+      messages: [{ role: "user", content }],
+    });
+    const text = data.choices?.[0]?.message?.content?.trim() || "";
+    res.json({ text, cams: frames.map(f => f.cam) });
+  } catch (err) {
+    res.status(502).json({ error: String(err.message || err) });
+  }
+});
+
+// Natural-language intent → actions. POST { text, cams:[{id,ready}] } -> { target_bearing_per_cam, poi?, reply }
+// Useful later for "everyone face the truck" style commands. MVP returns a text reply only.
+app.post("/api/ai/intent", async (req, res) => {
+  try {
+    const { text, context } = req.body || {};
+    if (!text) return res.status(400).json({ error: "text required" });
+    const data = await callOpenAI({
+      model: AI_TEXT_MODEL,
+      max_tokens: 160,
+      messages: [
+        { role: "system", content:
+          "You are an ops assistant. Interpret short operator commands about a 4-cam sensor swarm. " +
+          "Reply in one terse line (≤ 20 words)." },
+        { role: "user", content: `State: ${JSON.stringify(context || {})}\nCommand: ${text}` },
+      ],
+    });
+    res.json({ text: data.choices?.[0]?.message?.content?.trim() || "" });
+  } catch (err) {
+    res.status(502).json({ error: String(err.message || err) });
   }
 });
 

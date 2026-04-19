@@ -50,9 +50,16 @@ def streamer_failed():
     return subprocess.run(["systemctl", "is-failed", "--quiet", "streamer.service"]).returncode == 0
 
 
+def mark_north(strip):
+    # Persistent orientation marker. User aligns the ring so this LED points
+    # true north; all other effects are read relative to it.
+    strip.setPixelColor(NORTH_LED, rgb(1.0, 0.0, 0.0, 0.35))
+
+
 def clear(strip):
     for i in range(NUM_LEDS):
         strip.setPixelColor(i, 0)
+    mark_north(strip)
     strip.show()
 
 
@@ -105,6 +112,7 @@ def render(strip, mode, t):
     else:
         clear(strip)
         return
+    mark_north(strip)
     strip.show()
 
 
@@ -159,9 +167,27 @@ def render_override(strip, o, t):
         lvl = 0.6 + 0.4 * (0.5 + 0.5 * math.sin(t * 6.0))
         for i in range(NUM_LEDS):
             strip.setPixelColor(i, rgb(0.2, 1.0, 1.0, lvl))
+    elif mode == "compass":
+        # Point an arrow at bearing_deg (0° = LED 0 / physical north, clockwise).
+        # Center LED full-bright, neighbors fall off across `width` LEDs total.
+        if r == 0 and g == 0 and b == 0:
+            r, g, b = 0.71, 0.82, 0.43  # app accent default
+        bearing = float(o.get("bearing_deg", 0.0)) % 360.0
+        width   = max(1.0, float(o.get("width", 3)))
+        target  = bearing / 360.0 * NUM_LEDS
+        pulse   = 0.8 + 0.2 * (0.5 + 0.5 * math.sin(t * 3.0))
+        half    = width / 2.0
+        for i in range(NUM_LEDS):
+            d = min((i - target) % NUM_LEDS, (target - i) % NUM_LEDS)
+            if d <= half:
+                lvl = max(0.05, 1.0 - (d / half)) * pulse
+                strip.setPixelColor(i, rgb(r, g, b, lvl))
+            else:
+                strip.setPixelColor(i, 0)
     else:
         for i in range(NUM_LEDS):
             strip.setPixelColor(i, rgb(r, g, b, 1.0))
+    mark_north(strip)
     strip.show()
 
 

@@ -3,21 +3,32 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>enel · camera flow</title>
+    <title>enel</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
+  <body class="mil">
     <main class="flow-page">
       <header class="flow-header">
-        <div>
-          <h1>camera flow</h1>
-          <p>Four Pi Zero cameras streaming into a Gaussian-splat reconstruction.</p>
+        <div class="hdr-left">
+          <h1 class="mono">enel</h1>
+          <div class="hdr-expand mono">edge-networked environment lattice</div>
         </div>
-        <div class="pill mono" id="serverStatus">Loading...</div>
+        <div class="hdr-right">
+          <button class="ctrl-btn hdr-btn mono" id="btnSitrep" title="Fuse all live feeds into a single report">sitrep</button>
+          <div class="pill mono" id="serverStatus">—</div>
+          <div class="hdr-clock mono" id="opsClock">--:--:--</div>
+        </div>
       </header>
 
+      <section id="sitrepPanel" class="sitrep-panel mono" style="display:none">
+        <div class="sitrep-head">
+          <span class="sitrep-label">fleet sitrep</span>
+          <button class="sitrep-close" id="sitrepClose" title="dismiss">×</button>
+        </div>
+        <div class="sitrep-body" id="sitrepBody">—</div>
+      </section>
+
       <section class="flow-stage" id="flowStage">
-        <!-- SVG sits behind the cam / splat nodes and draws animated pipes. -->
         <svg class="flow-pipes" id="flowPipes" aria-hidden="true"></svg>
 
         <div class="cam-row">
@@ -29,13 +40,61 @@
 
         <div class="splat-wrap">
           <div class="splat-node" id="splatNode">
-            <div class="splat-title mono">gaussian splat</div>
-            <div class="splat-sub">reconstruction sink</div>
-            <div class="splat-dots">
-              <span></span><span></span><span></span>
-            </div>
+            <div class="splat-label mono">fusion</div>
+            <div class="splat-meta mono"><span id="splatLinkCount">0/4</span></div>
           </div>
         </div>
+      </section>
+
+      <section class="splat-section">
+        <div class="splat-head">
+          <div class="splat-left">
+            <span class="splat-title mono">gaussian splat · terrain reconstruction</span>
+            <span class="splat-scene mono" id="splatSceneName">stump</span>
+          </div>
+          <div class="splat-right">
+            <button class="ctrl-btn mono" id="btnSplatReload" title="Reload splat">reload</button>
+          </div>
+        </div>
+        <div class="splat-stage">
+          <iframe id="splatFrame"
+                  class="splat-frame"
+                  src="/splat/?url=/scenes/stump.splat"
+                  title="gaussian splat viewer"
+                  allow="xr-spatial-tracking; gamepad; fullscreen"></iframe>
+        </div>
+      </section>
+
+      <section class="splat-be-section">
+        <div class="splat-be-head">
+          <div class="splat-be-left">
+            <span class="splat-be-title mono">bird's-eye · gaussian splat</span>
+            <span class="splat-be-state mono" id="splatBeState">dormant</span>
+          </div>
+          <div class="splat-be-right">
+            <button class="ctrl-btn mono" id="btnSplatBeToggle">activate</button>
+          </div>
+        </div>
+        <div class="splat-be-stage" id="splatBeStage">
+          <div class="splat-be-placeholder mono" id="splatBePlaceholder">
+            click <b>activate</b> to load the ~150 MB bird's-eye render
+          </div>
+          <div class="splat-be-spinner mono" id="splatBeSpinner" style="display:none">
+            <div class="be-spin"></div>
+            <span>loading splat…</span>
+          </div>
+          <!-- iframe injected on activate -->
+          <div class="splat-be-overlay" id="splatBeOverlay"></div>
+        </div>
+      </section>
+
+      <section class="mini-map-section">
+        <div class="mm-header">
+          <div class="mm-title mono">tactical map</div>
+          <div class="mm-hint mono">drag empty · pan · wheel zoom · tap empty to drop poi · double-click to reset</div>
+        </div>
+        <svg class="mini-map" id="miniMap" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="mm-hud mono" id="mmHud">×1.00</div>
       </section>
     </main>
 

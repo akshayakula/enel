@@ -7,3 +7,7 @@ exports/
 recordings/
 .superpowers/
 __pycache__/
+.env
+.env.local
+web_rtc_app/public/scenes/*.splat
+web_rtc_app/public/scenes/*.ply
