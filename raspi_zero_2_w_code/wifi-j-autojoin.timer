@@ -1,0 +1,10 @@
+[Unit]
+Description=enel: periodic Wi-Fi 'J' scan
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=60s
+Unit=wifi-j-autojoin.service
+
+[Install]
+WantedBy=timers.target
