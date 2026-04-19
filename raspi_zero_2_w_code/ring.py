@@ -168,22 +168,57 @@ def render_override(strip, o, t):
         for i in range(NUM_LEDS):
             strip.setPixelColor(i, rgb(0.2, 1.0, 1.0, lvl))
     elif mode == "compass":
-        # Point an arrow at bearing_deg (0° = LED 0 / physical north, clockwise).
-        # Center LED full-bright, neighbors fall off across `width` LEDs total.
-        if r == 0 and g == 0 and b == 0:
-            r, g, b = 0.71, 0.82, 0.43  # app accent default
-        bearing = float(o.get("bearing_deg", 0.0)) % 360.0
-        width   = max(1.0, float(o.get("width", 3)))
-        target  = bearing / 360.0 * NUM_LEDS
-        pulse   = 0.8 + 0.2 * (0.5 + 0.5 * math.sin(t * 3.0))
-        half    = width / 2.0
-        for i in range(NUM_LEDS):
-            d = min((i - target) % NUM_LEDS, (target - i) % NUM_LEDS)
-            if d <= half:
-                lvl = max(0.05, 1.0 - (d / half)) * pulse
-                strip.setPixelColor(i, rgb(r, g, b, lvl))
-            else:
-                strip.setPixelColor(i, 0)
+        # Range-scaled compass arc.
+        # - on_target=True  → whole ring green, dim (power cap). No north marker.
+        # - else            → `count` LEDs centered on bearing_deg, rest dark.
+        # Back-compat: if count missing, fall back to `width` Gaussian falloff.
+        on_target = bool(o.get("on_target", False))
+        bearing   = float(o.get("bearing_deg", 0.0)) % 360.0
+        target    = bearing / 360.0 * NUM_LEDS
+        pulse     = 0.8 + 0.2 * (0.5 + 0.5 * math.sin(t * 3.0))
+
+        if on_target:
+            # Full ring green, ~50% of MAX_BRIGHT → ~4% duty → ~200-300 mA total.
+            glow = 0.45 + 0.15 * (0.5 + 0.5 * math.sin(t * 2.5))
+            for i in range(NUM_LEDS):
+                strip.setPixelColor(i, rgb(0.0, 1.0, 0.2, glow))
+            strip.show()
+            return  # skip mark_north — all-green overrides orientation marker
+
+        if "count" in o:
+            try:
+                count = int(o.get("count", 3))
+            except (TypeError, ValueError):
+                count = 3
+            count = max(1, min(NUM_LEDS, count))
+
+            if r == 0 and g == 0 and b == 0:
+                # Blend accent → green as the arc fills up (proximity cue).
+                tgt  = count / NUM_LEDS
+                r = 0.71 * (1 - tgt) + 0.00 * tgt
+                g = 0.82 * (1 - tgt) + 1.00 * tgt
+                b = 0.43 * (1 - tgt) + 0.20 * tgt
+
+            half_f = count / 2.0
+            for i in range(NUM_LEDS):
+                d = min((i - target) % NUM_LEDS, (target - i) % NUM_LEDS)
+                if d <= half_f:
+                    lvl = max(0.25, 1.0 - (d / max(half_f, 0.5)) * 0.6) * pulse
+                    strip.setPixelColor(i, rgb(r, g, b, lvl))
+                else:
+                    strip.setPixelColor(i, 0)
+        else:
+            if r == 0 and g == 0 and b == 0:
+                r, g, b = 0.71, 0.82, 0.43
+            width = max(1.0, float(o.get("width", 3)))
+            half  = width / 2.0
+            for i in range(NUM_LEDS):
+                d = min((i - target) % NUM_LEDS, (target - i) % NUM_LEDS)
+                if d <= half:
+                    lvl = max(0.05, 1.0 - (d / half)) * pulse
+                    strip.setPixelColor(i, rgb(r, g, b, lvl))
+                else:
+                    strip.setPixelColor(i, 0)
     else:
         for i in range(NUM_LEDS):
             strip.setPixelColor(i, rgb(r, g, b, 1.0))

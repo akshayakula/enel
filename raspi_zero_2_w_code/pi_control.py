@@ -165,8 +165,8 @@ class Handler(BaseHTTPRequestHandler):
                 width = int(body.get("width", 3))
             except (TypeError, ValueError):
                 width = 3
-            width = max(1, min(8, width))
-            _write_override({
+            width = max(1, min(16, width))
+            payload = {
                 "mode":         "compass",
                 "bearing_deg":  bearing,
                 "width":        width,
@@ -174,7 +174,16 @@ class Handler(BaseHTTPRequestHandler):
                 "g":            _clamp_byte(body.get("g", 0)),
                 "b":            _clamp_byte(body.get("b", 0)),
                 "expires_at":   time.time() + _clamp_ttl(body.get("ttl", 300)),
-            })
+            }
+            if "count" in body:
+                try:
+                    c = int(body.get("count"))
+                except (TypeError, ValueError):
+                    c = 3
+                payload["count"] = max(1, min(16, c))
+            if body.get("on_target"):
+                payload["on_target"] = True
+            _write_override(payload)
             return self._json(200, {"ok": True, "bearing_deg": bearing})
 
         if self.path == "/ring/clear":

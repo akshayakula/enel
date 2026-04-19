@@ -1,0 +1,13 @@
+[Unit]
+Description=enel mavlink-bridge (cam1 drone UART ↔ WebSocket)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/mavlink_bridge.py
+Restart=always
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target
