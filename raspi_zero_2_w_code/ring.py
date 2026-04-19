@@ -2,7 +2,9 @@
 # enel NeoPixel 16-ring lifecycle indicator.
 # Ring hardware: SK6812 RGBW 16-pixel ring (W28666-C). 4 bytes/LED, GRBW order.
 # LED 0 is physical north. Brightness is hard-capped; colors are gamma-corrected.
+import json
 import math
+import os
 import signal
 import subprocess
 import sys
@@ -20,6 +22,7 @@ LED_STRIP    = ws.SK6812_STRIP_GRBW  # RGBW ring (4 bytes/LED)
 MAX_BRIGHT   = 32      # hard cap (~12.5%) — safe off Pi 5V rail
 GAMMA        = 2.2
 NORTH_LED    = 0
+OVERRIDE_PATH = "/run/ring-override.json"
 
 
 def gamma_byte(v):
@@ -115,6 +118,53 @@ def pick_mode():
     return "connecting"
 
 
+# Override file schema — written atomically by pi-control.
+#   {"mode": "solid"|"identify"|"clear", "r": 0-255, "g": 0-255, "b": 0-255, "expires_at": epoch_seconds}
+# "clear" (or missing/expired file) means "use the automatic state machine".
+_override_mtime = 0.0
+_override_cached = None
+
+def read_override():
+    """Cheap disk check; only reparse when mtime changes. Returns (mode, r, g, b) or None."""
+    global _override_mtime, _override_cached
+    try:
+        st = os.stat(OVERRIDE_PATH)
+    except FileNotFoundError:
+        _override_cached = None
+        return None
+    if st.st_mtime != _override_mtime:
+        _override_mtime = st.st_mtime
+        try:
+            with open(OVERRIDE_PATH) as f:
+                _override_cached = json.load(f)
+        except (OSError, ValueError):
+            _override_cached = None
+    o = _override_cached
+    if not o:
+        return None
+    if o.get("mode") == "clear":
+        return None
+    if o.get("expires_at", 0) < time.time():
+        return None
+    return o
+
+
+def render_override(strip, o, t):
+    mode = o.get("mode", "solid")
+    r = o.get("r", 0) / 255.0
+    g = o.get("g", 0) / 255.0
+    b = o.get("b", 0) / 255.0
+    if mode == "identify":
+        # Bright pulsing beacon — ignore custom color, always a locator cyan-white.
+        lvl = 0.6 + 0.4 * (0.5 + 0.5 * math.sin(t * 6.0))
+        for i in range(NUM_LEDS):
+            strip.setPixelColor(i, rgb(0.2, 1.0, 1.0, lvl))
+    else:
+        for i in range(NUM_LEDS):
+            strip.setPixelColor(i, rgb(r, g, b, 1.0))
+    strip.show()
+
+
 def main():
     strip = PixelStrip(NUM_LEDS, GPIO_PIN, LED_FREQ_HZ, LED_DMA,
                        LED_INVERT, MAX_BRIGHT, LED_CHANNEL, LED_STRIP)
@@ -141,7 +191,11 @@ def main():
             if now - last_state_check > 0.5:
                 mode = pick_mode()
                 last_state_check = now
-            render(strip, mode, now - start)
+            override = read_override()
+            if override:
+                render_override(strip, override, now - start)
+            else:
+                render(strip, mode, now - start)
             time.sleep(1.0 / 60.0)
     except Exception:
         t0 = time.monotonic()

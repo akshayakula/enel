@@ -15,12 +15,76 @@ const CERT_PATH = path.join(CERT_DIR, "dev-cert.pem");
 const KEY_PATH = path.join(CERT_DIR, "dev-key.pem");
 
 app.use(express.static(PUBLIC_DIR));
+app.use(express.json({ limit: "32kb" }));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, protocol: "https" });
 });
 
 const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
+
+const PI_CONTROL_PORT = 8088;
+const PI_CONTROL_TIMEOUT_MS = 3000;
+const piHostForSlot = (slot) => `pi-${slot}.local`;
+
+app.get("/api/state", async (_req, res) => {
+  try {
+    const response = await fetch("http://127.0.0.1:9997/v3/paths/list");
+    if (!response.ok) {
+      return res.status(502).json({ error: `mediamtx api ${response.status}` });
+    }
+    const body = await response.json();
+    const byName = new Map((body.items || []).map((p) => [p.name, p]));
+    const slots = STREAM_SLOTS.map((id) => {
+      const p = byName.get(id);
+      if (!p) return { id, ready: false };
+      return {
+        id,
+        ready: Boolean(p.ready),
+        readers: Array.isArray(p.readers) ? p.readers.length : 0,
+        tracks: p.tracks || [],
+        bytesReceived: p.bytesReceived ?? null,
+        bytesSent: p.bytesSent ?? null,
+        readyTime: p.readyTime ?? null,
+      };
+    });
+    res.json({ slots });
+  } catch (err) {
+    res.status(502).json({ error: String(err) });
+  }
+});
+
+// Proxy a narrow set of pi-control endpoints per cam id.
+// Example: POST /api/pi/cam1/ring/identify  -> http://pi-cam1.local:8088/ring/identify
+app.all("/api/pi/:id/:path(*)", async (req, res) => {
+  const { id, path: subPath } = req.params;
+  if (!STREAM_SLOTS.includes(id)) {
+    return res.status(404).json({ error: "unknown cam" });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PI_CONTROL_TIMEOUT_MS);
+  try {
+    const target = `http://${piHostForSlot(id)}:${PI_CONTROL_PORT}/${subPath}`;
+    const init = {
+      method: req.method,
+      signal: controller.signal,
+      headers: { "content-type": "application/json" },
+    };
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      init.body = JSON.stringify(req.body || {});
+    }
+    const upstream = await fetch(target, init);
+    const text = await upstream.text();
+    res.status(upstream.status);
+    const ct = upstream.headers.get("content-type");
+    if (ct) res.setHeader("content-type", ct);
+    res.send(text);
+  } catch (err) {
+    res.status(502).json({ error: String(err && err.message ? err.message : err) });
+  } finally {
+    clearTimeout(timer);
+  }
+});
 
 app.get("/api/next-slot", async (_req, res) => {
   try {

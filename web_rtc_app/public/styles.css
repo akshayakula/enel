@@ -161,3 +161,231 @@ video {
     align-items: start;
   }
 }
+
+/* --------------------------------------------------------------------------
+ * Camera flow stage — SVG pipes behind, 4 cam nodes on top, splat sink below.
+ * -------------------------------------------------------------------------- */
+
+.flow-page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.flow-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.flow-header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  line-height: 1;
+}
+
+.flow-header p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  max-width: 640px;
+}
+
+.flow-stage {
+  position: relative;
+  padding: 12px 4px 180px;
+}
+
+.flow-pipes {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.cam-row {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.cam-node {
+  background: rgba(28, 33, 40, 0.86);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+}
+
+.cam-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.cam-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cam-status {
+  font-size: 0.78rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.cam-status.live { color: var(--accent); }
+.cam-status.offline { color: var(--muted); }
+.cam-status.error { color: var(--danger); }
+
+.cam-video-wrap {
+  background: #090b0d;
+  aspect-ratio: 16 / 9;
+}
+
+.cam-video-wrap video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cam-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 14px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.cam-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 14px 14px;
+}
+
+.ctrl-btn {
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.ctrl-btn:hover:not(:disabled) {
+  background: rgba(128, 237, 153, 0.1);
+  border-color: var(--accent);
+}
+
+.ctrl-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ctrl-btn--ghost {
+  color: var(--muted);
+}
+
+.ctrl-color {
+  width: 34px;
+  height: 28px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+
+.splat-wrap {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  z-index: 1;
+}
+
+.splat-node {
+  min-width: 260px;
+  padding: 18px 28px;
+  border-radius: 24px;
+  border: 1.5px solid var(--accent);
+  background:
+    radial-gradient(circle at 50% 0%, rgba(128, 237, 153, 0.22), transparent 70%),
+    rgba(18, 24, 21, 0.85);
+  text-align: center;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.32), 0 0 40px rgba(128, 237, 153, 0.12);
+}
+
+.splat-title {
+  font-size: 1rem;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+}
+
+.splat-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.splat-dots {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.splat-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.45;
+  animation: splat-pulse 1.6s ease-in-out infinite;
+}
+
+.splat-dots span:nth-child(2) { animation-delay: 0.25s; }
+.splat-dots span:nth-child(3) { animation-delay: 0.5s; }
+
+@keyframes splat-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
+
+.pipe {
+  fill: none;
+  stroke: rgba(128, 237, 153, 0.32);
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.pipe-dot {
+  fill: var(--accent);
+  filter: drop-shadow(0 0 4px rgba(128, 237, 153, 0.8));
+}
+
+@media (max-width: 1000px) {
+  .cam-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 620px) {
+  .cam-row { grid-template-columns: 1fr; }
+  .flow-stage { padding-bottom: 220px; }
+}

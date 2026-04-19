@@ -3,23 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebRTC Viewer</title>
+    <title>enel · camera flow</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="page">
-      <section class="header">
+    <main class="flow-page">
+      <header class="flow-header">
         <div>
-          <h1>4-Camera Monitor Wall</h1>
-          <p>
-            This dashboard embeds four MediaMTX WebRTC viewers and displays
-            `cam1` through `cam4` simultaneously in a 2x2 layout.
-          </p>
+          <h1>camera flow</h1>
+          <p>Four Pi Zero cameras streaming into a Gaussian-splat reconstruction.</p>
         </div>
         <div class="pill mono" id="serverStatus">Loading...</div>
-      </section>
+      </header>
 
-      <section class="grid" id="videoGrid"></section>
+      <section class="flow-stage" id="flowStage">
+        <!-- SVG sits behind the cam / splat nodes and draws animated pipes. -->
+        <svg class="flow-pipes" id="flowPipes" aria-hidden="true"></svg>
+
+        <div class="cam-row">
+          <article class="cam-node" data-cam="cam1"></article>
+          <article class="cam-node" data-cam="cam2"></article>
+          <article class="cam-node" data-cam="cam3"></article>
+          <article class="cam-node" data-cam="cam4"></article>
+        </div>
+
+        <div class="splat-wrap">
+          <div class="splat-node" id="splatNode">
+            <div class="splat-title mono">gaussian splat</div>
+            <div class="splat-sub">reconstruction sink</div>
+            <div class="splat-dots">
+              <span></span><span></span><span></span>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <script src="/mediamtx/cam1/reader.js"></script>

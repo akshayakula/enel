@@ -5,3 +5,5 @@ certs/*.pem
 mediamtx.log
 exports/
 recordings/
+.superpowers/
+__pycache__/
