@@ -1,0 +1,13 @@
+[Unit]
+Description=enel pi-control HTTP service (ring override + status)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/bin/pi_control.py
+Restart=on-failure
+RestartSec=2
+User=root
+
+[Install]
+WantedBy=multi-user.target

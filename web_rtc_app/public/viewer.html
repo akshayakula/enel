@@ -3,78 +3,143 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WebRTC Viewer</title>
+    <title>enel</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
-  <body>
-    <main class="page">
-      <section class="header">
-        <div>
-          <h1>4-Camera Monitor Wall</h1>
-          <p>
-            This dashboard embeds four MediaMTX WebRTC viewers and displays
-            `cam1` through `cam4` simultaneously in a 2x2 layout.
-          </p>
+  <body class="mil booting">
+    <!-- Cold-boot intro. Removed by viewer.js after the sequence completes. -->
+    <div id="enelBoot" class="boot-overlay" aria-hidden="true">
+      <canvas id="enelBootLattice" class="boot-lattice"></canvas>
+      <div class="boot-scanline"></div>
+      <div class="boot-content mono">
+        <div class="boot-header">
+          <span class="boot-cross">+</span>
+          <span class="boot-id" id="bootId">cold boot · rev 4.19.26 · classification // enel</span>
+          <span class="boot-cross">+</span>
         </div>
-        <div class="pill mono" id="serverStatus">Loading...</div>
+        <div class="boot-title">
+          <span class="boot-title-big" id="bootTitleBig">ENEL</span>
+          <span class="boot-title-sub" id="bootTitleSub">edge-networked environment lattice</span>
+        </div>
+        <ul class="boot-log" id="bootLog"></ul>
+        <div class="boot-hint">press any key to skip</div>
+      </div>
+    </div>
+
+    <main class="flow-page">
+      <header class="flow-header">
+        <div class="hdr-left">
+          <h1 class="mono">enel</h1>
+          <div class="hdr-expand mono">edge-networked environment lattice</div>
+        </div>
+        <div class="hdr-right">
+          <button class="ctrl-btn hdr-btn mono" id="btnSitrep" title="Fuse all live feeds into a single report">sitrep</button>
+          <button class="ctrl-btn hdr-btn mono" id="btnSwarm" title="Issue natural-language swarm orders">swarm</button>
+          <button class="ctrl-btn hdr-btn mono" id="btnGps" title="Request browser geolocation">gps</button>
+          <div class="pill mono hdr-gps" id="gpsStatus" title="browser geolocation">gps —</div>
+          <div class="pill mono" id="serverStatus">—</div>
+          <div class="hdr-clock mono" id="opsClock">--:--:--</div>
+        </div>
+      </header>
+
+      <section id="sitrepPanel" class="sitrep-panel mono" style="display:none">
+        <div class="sitrep-head">
+          <span class="sitrep-label">fleet sitrep</span>
+          <button class="sitrep-close" id="sitrepClose" title="dismiss">×</button>
+        </div>
+        <div class="sitrep-body" id="sitrepBody">—</div>
       </section>
 
-      <section class="panel stack">
-        <div class="controls">
-          <button class="button" id="compileRecordingsButton" type="button">
-            Compile All Cameras
-          </button>
-          <div class="pill mono" id="compileStatus">Idle</div>
+      <section id="swarmPanel" class="swarm-panel mono" style="display:none">
+        <div class="swarm-head">
+          <span class="swarm-label">swarm commander</span>
+          <span class="swarm-sub">natural-language orders · drone yaw + ground rings</span>
+          <button class="sitrep-close" id="swarmClose" title="dismiss">×</button>
         </div>
-        <div class="controls">
-          <label class="input-group" for="kiriApiKey">
-            <span class="input-label">KIRI API Key</span>
-            <input
-              class="text-input mono"
-              id="kiriApiKey"
-              type="password"
-              placeholder="Paste KIRI API key"
-              autocomplete="off"
-            />
-          </label>
-        </div>
-        <div class="stack" id="compileResults" hidden></div>
+        <form class="swarm-form" id="swarmForm" autocomplete="off">
+          <input id="swarmInput" class="swarm-input mono"
+                 type="text"
+                 placeholder='e.g. "have ground units form a triangle facing north, drone pivot right 45°"'
+                 maxlength="240" />
+          <button type="submit" id="swarmIssue" class="ctrl-btn mono swarm-issue">issue</button>
+        </form>
+        <div class="swarm-log" id="swarmLog"></div>
       </section>
 
-      <section class="panel stack">
-        <div class="controls">
-          <strong>KIRI Results</strong>
-          <div class="pill mono" id="kiriResultsStatus">No tracked jobs</div>
+      <section class="flow-stage" id="flowStage">
+        <svg class="flow-pipes" id="flowPipes" aria-hidden="true"></svg>
+
+        <div class="cam-row">
+          <article class="cam-node" data-cam="cam1"></article>
+          <article class="cam-node" data-cam="cam2"></article>
+          <article class="cam-node" data-cam="cam3"></article>
+          <article class="cam-node" data-cam="cam4"></article>
         </div>
-        <div class="stack" id="kiriJobsList"></div>
+
+        <div class="splat-wrap">
+          <div class="splat-node" id="splatNode">
+            <div class="splat-label mono">fusion</div>
+            <div class="splat-meta mono"><span id="splatLinkCount">0/4</span></div>
+            <button class="ctrl-btn mono fusion-scan-btn" id="btnFusionScan"
+                    title="Record 15 s per live cam, concat, send to Kiri Engine for 3D reconstruction">
+              begin mapping
+            </button>
+            <div class="fusion-scan-status mono" id="fusionScanStatus" style="display:none"></div>
+          </div>
+        </div>
       </section>
 
-      <section class="panel stack">
-        <div class="controls">
-          <strong>Lambda Splat Pipeline</strong>
-          <div class="pill mono" id="splatStatus">Idle</div>
+      <section class="mini-map-section">
+        <div class="mm-header">
+          <div class="mm-title mono">tactical map</div>
+          <div class="mm-hint mono">drag empty · pan · wheel zoom · tap empty to drop poi · double-click to reset</div>
         </div>
-        <div class="controls">
-          <button class="button" id="startSplatButton" type="button">
-            Generate Splat (latest compiled)
-          </button>
-          <label class="input-group" for="splatMaxSteps">
-            <span class="input-label">Max steps</span>
-            <input class="text-input mono" id="splatMaxSteps" type="number" value="7000" min="1000" max="30000" step="500" />
-          </label>
-          <label class="input-group" for="splatFramesPerCam">
-            <span class="input-label">Frames / cam</span>
-            <input class="text-input mono" id="splatFramesPerCam" type="number" value="120" min="20" max="400" step="10" />
-          </label>
-          <label class="input-group" for="splatKeepWarm" style="flex-direction:row;align-items:center;gap:6px">
-            <input id="splatKeepWarm" type="checkbox" />
-            <span class="input-label">Keep instance warm</span>
-          </label>
-        </div>
-        <div class="stack" id="splatJobsList"></div>
+        <svg class="mini-map" id="miniMap" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="mm-hud mono" id="mmHud">×1.00</div>
       </section>
 
-      <section class="grid" id="videoGrid"></section>
+      <section class="splat-section">
+        <div class="splat-head">
+          <div class="splat-left">
+            <span class="splat-title mono">gaussian splat · terrain reconstruction</span>
+            <span class="splat-scene mono" id="splatSceneName">3DGS</span>
+          </div>
+          <div class="splat-right">
+            <button class="ctrl-btn mono" id="btnSplatReload" title="Reload splat">reload</button>
+          </div>
+        </div>
+        <div class="splat-stage">
+          <iframe id="splatFrame"
+                  class="splat-frame"
+                  src="/splat/?url=/scenes/3DGS.ply"
+                  title="gaussian splat viewer"
+                  allow="xr-spatial-tracking; gamepad; fullscreen"></iframe>
+        </div>
+      </section>
+
+      <section class="splat-be-section">
+        <div class="splat-be-head">
+          <div class="splat-be-left">
+            <span class="splat-be-title mono">bird's-eye · gaussian splat</span>
+            <span class="splat-be-state mono" id="splatBeState">dormant</span>
+          </div>
+          <div class="splat-be-right">
+            <button class="ctrl-btn mono" id="btnSplatBeToggle">activate</button>
+          </div>
+        </div>
+        <div class="splat-be-stage" id="splatBeStage">
+          <div class="splat-be-placeholder mono" id="splatBePlaceholder">
+            click <b>activate</b> to load the ~150 MB bird's-eye render
+          </div>
+          <div class="splat-be-spinner mono" id="splatBeSpinner" style="display:none">
+            <div class="be-spin"></div>
+            <span>loading splat…</span>
+          </div>
+          <!-- iframe injected on activate -->
+          <div class="splat-be-overlay" id="splatBeOverlay"></div>
+        </div>
+      </section>
+
     </main>
 
     <script src="/mediamtx/cam1/reader.js"></script>

@@ -1,10 +1,13 @@
+api: yes
+apiAddress: 127.0.0.1:9997
+
 playback: yes
 playbackAddress: :9996
 
 webrtcAdditionalHosts:
   - 127.0.0.1
   - localhost
-  - 192.168.1.7
+  - 192.168.1.248
 
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189

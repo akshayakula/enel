@@ -131,10 +131,51 @@ window.addEventListener("pagehide", () => {
   cleanupSession().catch(() => {});
 });
 
+async function claimNextSlot() {
+  setPublishStatus("Finding free slot");
+  const response = await fetch("/api/next-slot", { cache: "no-store" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || `next-slot ${response.status}`);
+  }
+  const { streamId } = await response.json();
+  return streamId;
+}
+
+async function publishAuto({ retry = true } = {}) {
+  try {
+    const streamId = await claimNextSlot();
+    await publishToStream(streamId);
+  } catch (error) {
+    console.error(error);
+    if (retry) {
+      await new Promise((r) => setTimeout(r, 750));
+      await publishAuto({ retry: false });
+      return;
+    }
+    setPublishStatus("No free slot");
+    setCameraStatus(String(error.message || error), "error");
+  }
+}
+
+const autoButton = document.createElement("button");
+autoButton.className = "button mono";
+autoButton.textContent = "auto";
+autoButton.addEventListener("click", () => {
+  publishAuto().catch((error) => {
+    console.error(error);
+  });
+});
+streamButtons.appendChild(autoButton);
+
 renderButtons();
 
 if (STREAM_IDS.includes(requestedStreamId)) {
   publishToStream(requestedStreamId).catch((error) => {
+    console.error(error);
+  });
+} else {
+  publishAuto().catch((error) => {
     console.error(error);
   });
 }

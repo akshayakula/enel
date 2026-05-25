@@ -1,0 +1,19 @@
+[Unit]
+Description=enel Pi WebRTC streamer (v0: WHIP publisher)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/streamer.sh
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+# Pi Zero 2 W: allow picamera/libcamera + WHIP networking
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target

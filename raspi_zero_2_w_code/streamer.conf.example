@@ -1,0 +1,20 @@
+# enel Pi streamer config (v0 — live WHIP publisher only)
+#
+# This file is sourced by streamer.sh. It lives on the FAT boot
+# partition so it can be edited from any computer (SD card reader).
+# On the running Pi it's at /boot/firmware/streamer.conf.
+# When the SD card is in a Mac it's at /Volumes/bootfs/streamer.conf.
+
+# --- identity ---
+PI_NAME=pi-cam1
+STREAM_ID=cam1
+
+# --- server ---
+SERVER_HOST=192.168.1.248
+WHIP_PORT=8889
+
+# --- live stream profile ---
+WIDTH=1280
+HEIGHT=720
+FRAMERATE=30
+BITRATE=2000000

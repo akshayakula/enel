@@ -2,10 +2,28 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const https = require("https");
-const { execFile, spawn } = require("child_process");
-const { URL } = require("url");
+const os = require("os");
+const crypto = require("crypto");
+const { spawn } = require("child_process");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
+const Busboy = require("busboy");
+const AdmZip = require("adm-zip");
+
+// Load .env at startup (no dotenv dep needed — tiny parser).
+(() => {
+  try {
+    const envPath = path.join(__dirname, ".env");
+    if (!fs.existsSync(envPath)) return;
+    for (const line of fs.readFileSync(envPath, "utf8").split("\n")) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
+      if (!m) continue;
+      let val = m[2];
+      if (/^".*"$/.test(val) || /^'.*'$/.test(val)) val = val.slice(1, -1);
+      if (process.env[m[1]] === undefined) process.env[m[1]] = val;
+    }
+  } catch (err) { console.warn(".env parse skipped:", err.message); }
+})();
 
 const app = express();
 
@@ -15,12 +33,6 @@ const PUBLIC_DIR = path.join(__dirname, "web_rtc_app", "public");
 const CERT_DIR = path.join(__dirname, "certs");
 const CERT_PATH = path.join(CERT_DIR, "dev-cert.pem");
 const KEY_PATH = path.join(CERT_DIR, "dev-key.pem");
-const EXPORT_SCRIPT_PATH = path.join(__dirname, "scripts", "export-latest-mp4s.sh");
-const EXPORTS_DIR = path.join(__dirname, "exports", "compiled");
-const KIRI_3DGS_VIDEO_URL = "https://api.kiriengine.app/api/v1/open/3dgs/video";
-const KIRI_STATUS_URL = "https://api.kiriengine.app/api/v1/open/model/getStatus";
-const KIRI_MODEL_ZIP_URL = "https://api.kiriengine.app/api/v1/open/model/getModelZip";
-const KIRI_MODELS_DIR = path.join(__dirname, "exports", "kiri-models");
 const GAUSSIAN_SPLATS_BUILD_DIR = path.join(
   __dirname,
   "node_modules",
@@ -29,144 +41,470 @@ const GAUSSIAN_SPLATS_BUILD_DIR = path.join(
   "build",
 );
 const THREE_BUILD_DIR = path.join(__dirname, "node_modules", "three", "build");
-
 const SPLAT_PKG_DIR = path.join(__dirname, "video_to_gaussian_splat");
 const SPLAT_WORKSPACES_DIR = path.join(SPLAT_PKG_DIR, "workspaces");
 const SPLAT_PYTHON = process.env.SPLAT_PYTHON
   || path.join(SPLAT_PKG_DIR, ".venv", "bin", "python");
 const RECORDINGS_DIR = path.join(__dirname, "recordings");
-const splatJobs = new Map(); // jobId -> { proc, startedAt, workspace, inputPath }
+const EXPORTS_DIR = path.join(__dirname, "exports", "compiled");
+const splatJobs = new Map(); // jobId -> { proc, startedAt, workspace, inputPaths }
 
-app.use(express.json({ limit: "1mb" }));
 app.use(express.static(PUBLIC_DIR));
+app.use(express.json({ limit: "8mb" }));
 app.use("/vendor/gaussian-splats-3d", express.static(GAUSSIAN_SPLATS_BUILD_DIR));
 app.use("/vendor/three", express.static(THREE_BUILD_DIR));
-
-function runExecFile(file, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    execFile(file, args, options, (error, stdout = "", stderr = "") => {
-      if (error) {
-        error.stdout = stdout;
-        error.stderr = stderr;
-        reject(error);
-        return;
-      }
-      resolve({ stdout, stderr });
-    });
-  });
-}
-
-async function buildCombinedVideo(targetDir, files) {
-  const combinedName = "all_cams_combined.mp4";
-  const combinedPath = path.join(targetDir, combinedName);
-
-  if (files.length === 0) {
-    return null;
-  }
-
-  const normalizedFiles = [];
-  for (const file of files) {
-    const normalizedPath = path.join(
-      targetDir,
-      `${path.parse(file.name).name}_normalized.mp4`,
-    );
-    await runExecFile(
-      "ffmpeg",
-      [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        file.path,
-        "-an",
-        "-vf",
-        "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p,fps=30",
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "20",
-        "-movflags",
-        "+faststart",
-        normalizedPath,
-      ],
-      { cwd: __dirname },
-    );
-    normalizedFiles.push(normalizedPath);
-  }
-
-  const concatListPath = path.join(targetDir, "combined_concat.txt");
-  fs.writeFileSync(
-    concatListPath,
-    normalizedFiles.map((filePath) => `file '${filePath.replace(/'/g, "'\\''")}'`).join("\n") + "\n",
-  );
-
-  await runExecFile(
-    "ffmpeg",
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-y",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      concatListPath,
-      "-c",
-      "copy",
-      combinedPath,
-    ],
-    { cwd: __dirname },
-  );
-
-  return {
-    name: combinedName,
-    path: combinedPath,
-    url: `/exports/compiled/${path.basename(targetDir)}/${combinedName}`,
-  };
-}
-
-function requestKiriJson(urlString, apiKey) {
-  return new Promise((resolve, reject) => {
-    const requestOptions = new URL(urlString);
-    requestOptions.method = "GET";
-    requestOptions.headers = {
-      Authorization: `Bearer ${apiKey}`,
-    };
-
-    const request = https.request(requestOptions, (response) => {
-      let body = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk) => {
-        body += chunk;
-      });
-      response.on("end", () => {
-        try {
-          resolve({
-            statusCode: response.statusCode || 200,
-            json: JSON.parse(body),
-          });
-        } catch (error) {
-          reject(new Error(`Failed to parse KIRI response: ${body}`));
-        }
-      });
-    });
-
-    request.on("error", reject);
-    request.end();
-  });
-}
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, protocol: "https" });
 });
 
-app.get("/favicon.ico", (_req, res) => {
-  res.status(204).end();
+const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
+
+const PI_CONTROL_PORT = 8088;
+const PI_CONTROL_TIMEOUT_MS = 3000;
+const piHostForSlot = (slot) => `pi-${slot}.local`;
+
+app.get("/api/state", async (_req, res) => {
+  try {
+    const response = await fetch("http://127.0.0.1:9997/v3/paths/list");
+    if (!response.ok) {
+      return res.status(502).json({ error: `mediamtx api ${response.status}` });
+    }
+    const body = await response.json();
+    const byName = new Map((body.items || []).map((p) => [p.name, p]));
+    const slots = STREAM_SLOTS.map((id) => {
+      const p = byName.get(id);
+      if (!p) return { id, ready: false };
+      return {
+        id,
+        ready: Boolean(p.ready),
+        readers: Array.isArray(p.readers) ? p.readers.length : 0,
+        tracks: p.tracks || [],
+        bytesReceived: p.bytesReceived ?? null,
+        bytesSent: p.bytesSent ?? null,
+        readyTime: p.readyTime ?? null,
+      };
+    });
+    res.json({ slots });
+  } catch (err) {
+    res.status(502).json({ error: String(err) });
+  }
+});
+
+// Proxy a narrow set of pi-control endpoints per cam id.
+// Example: POST /api/pi/cam1/ring/identify  -> http://pi-cam1.local:8088/ring/identify
+app.all("/api/pi/:id/:path(*)", async (req, res) => {
+  const { id, path: subPath } = req.params;
+  if (!STREAM_SLOTS.includes(id)) {
+    return res.status(404).json({ error: "unknown cam" });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PI_CONTROL_TIMEOUT_MS);
+  try {
+    const target = `http://${piHostForSlot(id)}:${PI_CONTROL_PORT}/${subPath}`;
+    const init = {
+      method: req.method,
+      signal: controller.signal,
+      headers: { "content-type": "application/json" },
+    };
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      init.body = JSON.stringify(req.body || {});
+    }
+    const upstream = await fetch(target, init);
+    const text = await upstream.text();
+    res.status(upstream.status);
+    const ct = upstream.headers.get("content-type");
+    if (ct) res.setHeader("content-type", ct);
+    res.send(text);
+  } catch (err) {
+    res.status(502).json({ error: String(err && err.message ? err.message : err) });
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+// -----------------------------------------------------------------------
+// AI endpoints. Key stays server-side; browser posts frames + short prompts.
+// -----------------------------------------------------------------------
+const OPENAI_API_KEY    = process.env.OPENAI_API_KEY || "";
+const AI_VISION_MODEL   = process.env.AI_VISION_MODEL || "gpt-4o-mini";
+const AI_TEXT_MODEL     = process.env.AI_TEXT_MODEL   || "gpt-4o-mini";
+const AI_TIMEOUT_MS     = 20000;
+
+async function callOpenAI(body) {
+  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY not set");
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), AI_TIMEOUT_MS);
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: ctl.signal,
+      headers: {
+        "content-type": "application/json",
+        "authorization": `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await r.text();
+    if (!r.ok) throw new Error(`openai ${r.status}: ${text.slice(0, 300)}`);
+    return JSON.parse(text);
+  } finally { clearTimeout(t); }
+}
+
+app.get("/api/ai/status", (_req, res) => {
+  res.json({ configured: Boolean(OPENAI_API_KEY), vision: AI_VISION_MODEL, text: AI_TEXT_MODEL });
+});
+
+// Per-frame scene description. POST { cam, image_b64, prompt? } -> { text }
+app.post("/api/ai/describe", async (req, res) => {
+  try {
+    const { cam, image_b64, prompt } = req.body || {};
+    if (!image_b64) return res.status(400).json({ error: "image_b64 required" });
+    const sys = "You are an aerial/ground ops analyst. Given one video frame, " +
+      "reply in ONE short sentence (≤ 18 words): describe the dominant subject, " +
+      "motion, and anything notable. No hedging, no preamble.";
+    const userPrompt = prompt || "What is in this frame right now?";
+    const data = await callOpenAI({
+      model: AI_VISION_MODEL,
+      max_tokens: 80,
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: [
+          { type: "text", text: `${userPrompt} (cam: ${cam || "?"})` },
+          { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image_b64}`, detail: "low" } },
+        ] },
+      ],
+    });
+    const text = data.choices?.[0]?.message?.content?.trim() || "";
+    res.json({ cam, text });
+  } catch (err) {
+    res.status(502).json({ error: String(err.message || err) });
+  }
+});
+
+// Swarm sitrep — caller sends one or more frames, gets unified report + per-cam lines.
+app.post("/api/ai/sitrep", async (req, res) => {
+  try {
+    const frames = Array.isArray(req.body?.frames) ? req.body.frames.slice(0, 4) : [];
+    if (!frames.length) return res.status(400).json({ error: "frames required" });
+    const content = [
+      { type: "text", text:
+        "You are coordinating a 4-unit sensor swarm (1 airborne drone + ground units). " +
+        "Produce: (1) a one-line headline of the overall situation, " +
+        "(2) per-cam one-line observation labeled by cam id. " +
+        "Keep it terse, mission-style. No markdown." },
+    ];
+    for (const f of frames) {
+      if (!f?.image_b64) continue;
+      content.push({ type: "text", text: `— ${f.cam || "?"}:` });
+      content.push({ type: "image_url", image_url: {
+        url: `data:image/jpeg;base64,${f.image_b64}`, detail: "low",
+      }});
+    }
+    const data = await callOpenAI({
+      model: AI_VISION_MODEL,
+      max_tokens: 240,
+      messages: [{ role: "user", content }],
+    });
+    const text = data.choices?.[0]?.message?.content?.trim() || "";
+    res.json({ text, cams: frames.map(f => f.cam) });
+  } catch (err) {
+    res.status(502).json({ error: String(err.message || err) });
+  }
+});
+
+// Swarm commander — natural-language order → structured plan JSON.
+// Browser executes the plan client-side (ground ring-compass + drone yaw pulse).
+// Drone throttle is intentionally NOT reachable from the AI — yaw only.
+app.post("/api/ai/swarm", async (req, res) => {
+  try {
+    const { text, context } = req.body || {};
+    if (!text || typeof text !== "string") return res.status(400).json({ error: "text required" });
+    const sys = [
+      "You are the commander of a 4-unit sensor swarm.",
+      "Unit roster:",
+      "  cam1 = airborne drone. You may command YAW ONLY.",
+      "          yaw PWM range: 1000..2000 where 1500=hold, 1000=hard left, 2000=hard right.",
+      "          Typical short turn: 1700 (gentle right) or 1300 (gentle left) for 600-1500 ms.",
+      "          You MAY NOT command throttle, roll, pitch, arm, disarm, or altitude.",
+      "  cam2, cam3, cam4 = ground units with 16-LED compass rings.",
+      "          bearing_deg: 0..359 (0=north). count: 1..15 LEDs lit centered on bearing (more = stronger \"go this way\").",
+      "          on_target: true lights the whole ring green (unit is on the objective).",
+      "Return STRICT JSON with the exact schema:",
+      "  {",
+      '    "rationale": "<one short sentence of intent>",',
+      '    "drone": { "yaw_pwm": <int 1000..2000>, "duration_ms": <int 0..3000> } | null,',
+      '    "ground": [ { "cam": "cam2"|"cam3"|"cam4", "bearing_deg": <int 0..359>, "count": <int 1..15>, "on_target": <bool> }, ... ]',
+      "  }",
+      "Rules: omit drone (null) if no yaw needed. Omit ground ([]) if none. Never invent cams. Never exceed ranges. No prose outside JSON.",
+    ].join("\n");
+    const data = await callOpenAI({
+      model: AI_TEXT_MODEL,
+      max_tokens: 400,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: sys },
+        { role: "user", content: `State: ${JSON.stringify(context || {})}\nOrder: ${text}` },
+      ],
+    });
+    let plan;
+    try { plan = JSON.parse(data.choices?.[0]?.message?.content || "{}"); }
+    catch { return res.status(502).json({ error: "ai returned non-json" }); }
+
+    // --- clamp + sanitize ----------------------------------------------------
+    const out = { rationale: "", drone: null, ground: [] };
+    if (typeof plan.rationale === "string") out.rationale = plan.rationale.slice(0, 200);
+    if (plan.drone && typeof plan.drone === "object") {
+      const pwm = Math.round(Number(plan.drone.yaw_pwm));
+      const dur = Math.round(Number(plan.drone.duration_ms));
+      if (Number.isFinite(pwm) && Number.isFinite(dur) && dur > 0) {
+        out.drone = {
+          yaw_pwm: Math.max(1000, Math.min(2000, pwm)),
+          duration_ms: Math.max(50, Math.min(3000, dur)),
+        };
+      }
+    }
+    if (Array.isArray(plan.ground)) {
+      for (const g of plan.ground.slice(0, 3)) {
+        if (!g || !["cam2", "cam3", "cam4"].includes(g.cam)) continue;
+        const bearing = Math.round(Number(g.bearing_deg));
+        const count   = Math.round(Number(g.count));
+        if (!Number.isFinite(bearing) || !Number.isFinite(count)) continue;
+        out.ground.push({
+          cam: g.cam,
+          bearing_deg: ((bearing % 360) + 360) % 360,
+          count: Math.max(1, Math.min(15, count)),
+          on_target: Boolean(g.on_target),
+        });
+      }
+    }
+    res.json({ plan: out });
+  } catch (err) {
+    res.status(502).json({ error: String(err.message || err) });
+  }
+});
+
+// Natural-language intent → actions. POST { text, cams:[{id,ready}] } -> { target_bearing_per_cam, poi?, reply }
+// Useful later for "everyone face the truck" style commands. MVP returns a text reply only.
+app.post("/api/ai/intent", async (req, res) => {
+  try {
+    const { text, context } = req.body || {};
+    if (!text) return res.status(400).json({ error: "text required" });
+    const data = await callOpenAI({
+      model: AI_TEXT_MODEL,
+      max_tokens: 160,
+      messages: [
+        { role: "system", content:
+          "You are an ops assistant. Interpret short operator commands about a 4-cam sensor swarm. " +
+          "Reply in one terse line (≤ 20 words)." },
+        { role: "user", content: `State: ${JSON.stringify(context || {})}\nCommand: ${text}` },
+      ],
+    });
+    res.json({ text: data.choices?.[0]?.message?.content?.trim() || "" });
+  } catch (err) {
+    res.status(502).json({ error: String(err.message || err) });
+  }
+});
+
+app.get("/api/next-slot", async (_req, res) => {
+  try {
+    const response = await fetch("http://127.0.0.1:9997/v3/paths/list");
+    if (!response.ok) {
+      res.status(502).json({ error: `mediamtx api ${response.status}` });
+      return;
+    }
+    const body = await response.json();
+    const busy = new Set(
+      (body.items || [])
+        .filter((p) => p.ready === true)
+        .map((p) => p.name),
+    );
+    const free = STREAM_SLOTS.find((id) => !busy.has(id));
+    if (!free) {
+      res.status(503).json({ error: "all slots busy", busy: [...busy] });
+      return;
+    }
+    res.json({ streamId: free, busy: [...busy] });
+  } catch (err) {
+    res.status(502).json({ error: String(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Kiri Engine — "gather mapping data" pipeline.
+//
+// Flow: browser records ~15 s of each live cam via MediaRecorder (webm), POSTs
+// all clips as multipart. Server concatenates with ffmpeg into one mp4, uploads
+// to Kiri's 3DGS video endpoint (1 job / 1 unified scan). Browser polls status;
+// once Kiri returns status=2 we fetch the signed zip, extract the PLY, and the
+// viewer's splat iframe loads it directly (main.js handles .ply natively).
+// ---------------------------------------------------------------------------
+const KIRI_API_KEY  = process.env.KIRI_API_KEY  || "";
+const KIRI_API_BASE = process.env.KIRI_API_BASE || "https://api.kiriengine.app/api/v1/open";
+const SCENES_DIR    = path.join(PUBLIC_DIR, "scenes");
+const KIRI_SESSIONS = new Map();   // sid → { serialize, status, plyUrl, error, createdAt }
+
+function kiriFetch(pathTail, init = {}) {
+  if (!KIRI_API_KEY) throw new Error("KIRI_API_KEY not set");
+  init.headers = Object.assign({}, init.headers || {}, {
+    "Authorization": `Bearer ${KIRI_API_KEY}`,
+  });
+  return fetch(`${KIRI_API_BASE}${pathTail}`, init);
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const p = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    p.stderr.on("data", (d) => { stderr += d.toString(); if (stderr.length > 4000) stderr = stderr.slice(-4000); });
+    p.on("close", (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-500)}`)));
+    p.on("error", reject);
+  });
+}
+
+app.get("/api/kiri/status", (_req, res) => {
+  res.json({ configured: Boolean(KIRI_API_KEY), base: KIRI_API_BASE });
+});
+
+// Accept 1..4 per-cam clips, concat to one mp4, forward to Kiri /3dgs/video.
+app.post("/api/kiri/scan/start", (req, res) => {
+  if (!KIRI_API_KEY) return res.status(500).json({ error: "KIRI_API_KEY not set" });
+
+  const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "kiri-"));
+  const clips = []; // { cam, ext, path }
+  const bb = Busboy({ headers: req.headers, limits: { fileSize: 200 * 1024 * 1024, files: 8 } });
+  let aborted = false;
+  const fail = (code, msg) => { if (!aborted) { aborted = true; try { res.status(code).json({ error: msg }); } catch {} } };
+
+  bb.on("file", (field, stream, info) => {
+    // Expect fields cam1..cam4. Pick extension from mimeType.
+    const m = /^cam[1-4]$/.exec(field);
+    if (!m) { stream.resume(); return; }
+    const mime = (info.mimeType || "").toLowerCase();
+    const ext  = mime.includes("mp4") ? "mp4" : mime.includes("matroska") ? "mkv" : "webm";
+    const p = path.join(workdir, `${field}.${ext}`);
+    clips.push({ cam: field, ext, path: p });
+    stream.pipe(fs.createWriteStream(p));
+  });
+
+  bb.on("close", async () => {
+    if (aborted) return;
+    if (!clips.length) return fail(400, "no clips uploaded");
+    clips.sort((a, b) => a.cam.localeCompare(b.cam));
+    const mergedPath = path.join(workdir, "scan.mp4");
+    try {
+      // Normalize resolution/fps across heterogenous browser recordings so the
+      // concat filter is happy. 1280x720 @ 30 matches the streamer profile.
+      const inputs = [];
+      const filters = [];
+      clips.forEach((c, i) => {
+        inputs.push("-i", c.path);
+        filters.push(`[${i}:v]scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black,fps=30,setsar=1[v${i}]`);
+      });
+      const concatInputs = clips.map((_, i) => `[v${i}]`).join("");
+      const filter = `${filters.join(";")};${concatInputs}concat=n=${clips.length}:v=1:a=0[out]`;
+      await runFfmpeg([
+        "-y", "-hide_banner", "-loglevel", "error",
+        ...inputs,
+        "-filter_complex", filter,
+        "-map", "[out]",
+        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart", "-an",
+        mergedPath,
+      ]);
+
+      // Upload to Kiri.
+      const fd = new FormData();
+      const buf = fs.readFileSync(mergedPath);
+      fd.append("videoFile", new Blob([buf], { type: "video/mp4" }), "scan.mp4");
+      fd.append("modelQuality", "0");
+      fd.append("textureQuality", "0");
+      fd.append("isMask", "0");
+      fd.append("fileFormat", "ply");
+      const up = await kiriFetch("/3dgs/video", { method: "POST", body: fd });
+      const upBody = await up.text();
+      if (!up.ok) { fail(502, `kiri upload ${up.status}: ${upBody.slice(0, 200)}`); return; }
+      let parsed;
+      try { parsed = JSON.parse(upBody); } catch { fail(502, "kiri non-json response"); return; }
+      const serialize = parsed?.data?.serialize;
+      if (!serialize) { fail(502, `kiri missing serialize: ${upBody.slice(0, 200)}`); return; }
+
+      const sid = crypto.randomBytes(6).toString("hex");
+      KIRI_SESSIONS.set(sid, {
+        serialize,
+        status: 0,
+        plyUrl: null,
+        error: null,
+        createdAt: Date.now(),
+        cams: clips.map((c) => c.cam),
+        workdir,
+      });
+      res.json({ sid, serialize, cams: clips.map((c) => c.cam) });
+      // Leave the workdir until fetch or 1 hour, then clean.
+      setTimeout(() => { try { fs.rmSync(workdir, { recursive: true, force: true }); } catch {} }, 60 * 60 * 1000);
+    } catch (err) {
+      fail(502, String(err.message || err));
+      try { fs.rmSync(workdir, { recursive: true, force: true }); } catch {}
+    }
+  });
+
+  bb.on("error", (e) => fail(400, `multipart error: ${e.message}`));
+  req.pipe(bb);
+});
+
+// Poll Kiri status for a session.
+app.get("/api/kiri/scan/:sid/status", async (req, res) => {
+  const s = KIRI_SESSIONS.get(req.params.sid);
+  if (!s) return res.status(404).json({ error: "unknown session" });
+  try {
+    const r = await kiriFetch(`/model/getStatus?serialize=${encodeURIComponent(s.serialize)}`);
+    const body = await r.json().catch(() => ({}));
+    // Kiri status codes: -1 uploading, 0 processing, 1 failed, 2 success, 3 queuing, 4 expired
+    const status = body?.data?.status;
+    if (typeof status === "number") s.status = status;
+    res.json({
+      sid: req.params.sid,
+      serialize: s.serialize,
+      status: s.status,
+      plyUrl: s.plyUrl,
+      cams: s.cams,
+      error: s.error,
+      raw: body,
+    });
+  } catch (err) {
+    res.status(502).json({ error: String(err.message || err) });
+  }
+});
+
+// Once status=2, fetch the zip, extract the PLY, expose under /scenes/.
+app.post("/api/kiri/scan/:sid/fetch", async (req, res) => {
+  const sid = req.params.sid;
+  const s = KIRI_SESSIONS.get(sid);
+  if (!s) return res.status(404).json({ error: "unknown session" });
+  if (s.plyUrl) return res.json({ sid, plyUrl: s.plyUrl, cached: true });
+  try {
+    const r = await kiriFetch(`/model/getModelZip?serialize=${encodeURIComponent(s.serialize)}`);
+    const body = await r.json().catch(() => ({}));
+    const zipUrl = body?.data?.modelUrl;
+    if (!zipUrl) return res.status(502).json({ error: "no modelUrl", raw: body });
+    const zipRes = await fetch(zipUrl);
+    if (!zipRes.ok) return res.status(502).json({ error: `zip fetch ${zipRes.status}` });
+    const buf = Buffer.from(await zipRes.arrayBuffer());
+    const zip = new AdmZip(buf);
+    const entries = zip.getEntries();
+    const plyEntry = entries.find((e) => !e.isDirectory && e.entryName.toLowerCase().endsWith(".ply"));
+    if (!plyEntry) return res.status(502).json({ error: "no .ply in zip", files: entries.map((e) => e.entryName) });
+    fs.mkdirSync(SCENES_DIR, { recursive: true });
+    const outName = `kiri-${sid}.ply`;
+    const outPath = path.join(SCENES_DIR, outName);
+    fs.writeFileSync(outPath, plyEntry.getData());
+    s.plyUrl = `/scenes/${outName}`;
+    res.json({ sid, plyUrl: s.plyUrl });
+    try { fs.rmSync(s.workdir, { recursive: true, force: true }); } catch {}
+  } catch (err) {
+    s.error = String(err.message || err);
+    res.status(502).json({ error: s.error });
+  }
 });
 
 app.get("/viewer", (_req, res) => {
@@ -181,18 +519,16 @@ function listSplatFiles(rootDir, urlRoot, sourceLabel, options = {}) {
   if (!fs.existsSync(rootDir)) return [];
 
   const extensions = new Set([".splat", ".ksplat", ".ply", ".spz"]);
-  const items = [];
-  const skipDirs = new Set(options.skipDirs || []);
   const include = options.include || (() => true);
   const rootResolved = path.resolve(rootDir);
+  const items = [];
 
   function walk(dir) {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name.startsWith(".")) continue;
       const abs = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (!skipDirs.has(entry.name)) walk(abs);
+        walk(abs);
         continue;
       }
       if (!entry.isFile()) continue;
@@ -203,12 +539,9 @@ function listSplatFiles(rootDir, urlRoot, sourceLabel, options = {}) {
       const relUrl = rel.split(path.sep).map(encodeURIComponent).join("/");
       const parts = rel.split(path.sep);
       const jobId = parts.find((part) => part.startsWith("job-")) || null;
-      const label = jobId
-        ? `${jobId} / ${path.basename(abs)}`
-        : rel.split(path.sep).join(" / ");
       items.push({
         name: path.basename(abs),
-        label,
+        label: jobId ? `${jobId} / ${path.basename(abs)}` : rel.split(path.sep).join(" / "),
         source: sourceLabel,
         url: `${urlRoot}/${relUrl}`,
         relativePath: rel,
@@ -230,273 +563,21 @@ app.get("/api/splats", (_req, res) => {
     SPLAT_WORKSPACES_DIR,
     "/splat-workspaces",
     "Pipeline",
-    {
-      include: (rel) => rel.split(path.sep).includes("result"),
-    },
+    { include: (rel) => rel.split(path.sep).includes("result") },
   );
-  const kiriFiles = listSplatFiles(KIRI_MODELS_DIR, "/kiri-models", "KIRI");
-  const files = [...pipelineFiles, ...kiriFiles].sort((a, b) => {
+  const sceneFiles = listSplatFiles(SCENES_DIR, "/scenes", "Scenes");
+  const files = [...pipelineFiles, ...sceneFiles].sort((a, b) => {
     const sceneBiasA = a.name === "scene.splat" ? 1 : 0;
     const sceneBiasB = b.name === "scene.splat" ? 1 : 0;
     if (sceneBiasA !== sceneBiasB) return sceneBiasB - sceneBiasA;
     return b.mtimeMs - a.mtimeMs;
   });
-
-  res.json({
-    ok: true,
-    files,
-    defaultUrl: files[0]?.url || null,
-  });
+  res.json({ ok: true, files, defaultUrl: files[0]?.url || null });
 });
-
-app.get("/iphone-safari", (_req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, "iphone-safari.html"));
-});
-
-app.get("/raspi", (_req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, "raspi.html"));
-});
-
-app.get("/publisher", (_req, res) => {
-  res.redirect(302, "/raspi");
-});
-
-app.get("/dev-cert.pem", (_req, res) => {
-  res.download(CERT_PATH);
-});
-
-app.get("/phone-publish", (req, res) => {
-  const query = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
-  res.redirect(302, `/iphone-safari${query}`);
-});
-
-app.post("/api/recordings/compile", async (_req, res) => {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const targetDir = path.join(EXPORTS_DIR, timestamp);
-
-  fs.mkdirSync(targetDir, { recursive: true });
-
-  try {
-    const { stdout = "", stderr = "" } = await runExecFile(EXPORT_SCRIPT_PATH, [targetDir], {
-      cwd: __dirname,
-    });
-
-    const lines = `${stdout}\n${stderr}`
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    const files = fs.existsSync(targetDir)
-      ? fs.readdirSync(targetDir)
-          .filter((name) => name.endsWith(".mp4"))
-          .sort()
-          .map((name) => ({
-            name,
-            path: path.join(targetDir, name),
-            url: `/exports/compiled/${timestamp}/${name}`,
-          }))
-      : [];
-
-    const combinedFile = await buildCombinedVideo(targetDir, files);
-    const warnings = lines.filter((line) => line.startsWith("[warn]"));
-
-    res.json({
-      ok: true,
-      outputDir: targetDir,
-      files,
-      combinedFile,
-      warnings,
-      log: lines,
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      outputDir: targetDir,
-      files: [],
-      combinedFile: null,
-      warnings: [],
-      log: [error.stdout, error.stderr].filter(Boolean),
-      error: error.message,
-    });
-  }
-});
-
-app.post("/api/kiri/upload", (req, res) => {
-  const apiKey = String(req.body?.apiKey || "").trim();
-  const fileUrl = String(req.body?.fileUrl || "").trim();
-
-  if (!apiKey) {
-    res.status(400).json({ ok: false, error: "Missing KIRI API key." });
-    return;
-  }
-
-  if (!fileUrl) {
-    res.status(400).json({ ok: false, error: "Missing compiled file URL." });
-    return;
-  }
-
-  const relativePath = fileUrl.replace(/^\/+/, "");
-  const absolutePath = path.resolve(__dirname, relativePath);
-  const exportsRoot = path.resolve(__dirname, "exports");
-
-  if (!absolutePath.startsWith(exportsRoot + path.sep)) {
-    res.status(400).json({ ok: false, error: "File must be inside exports/." });
-    return;
-  }
-
-  if (!fs.existsSync(absolutePath)) {
-    res.status(404).json({ ok: false, error: "Compiled file not found." });
-    return;
-  }
-
-  execFile(
-    "curl",
-    [
-      "--silent",
-      "--show-error",
-      "--location",
-      "--request",
-      "POST",
-      KIRI_3DGS_VIDEO_URL,
-      "--header",
-      `Authorization: Bearer ${apiKey}`,
-      "--form",
-      'isMesh="0"',
-      "--form",
-      'isMask="0"',
-      "--form",
-      `videoFile=@${absolutePath}`,
-    ],
-    { cwd: __dirname },
-    (error, stdout = "", stderr = "") => {
-      if (error) {
-        res.status(502).json({
-          ok: false,
-          error: stderr || error.message,
-        });
-        return;
-      }
-
-      try {
-        res.json(JSON.parse(stdout));
-      } catch (_parseError) {
-        res.status(502).json({
-          ok: false,
-          error: "Failed to parse KIRI response.",
-          raw: stdout || stderr,
-        });
-      }
-    },
-  );
-});
-
-app.get("/api/kiri/status", async (req, res) => {
-  const apiKey = String(req.query.apiKey || "").trim();
-  const serialize = String(req.query.serialize || "").trim();
-
-  if (!apiKey || !serialize) {
-    res.status(400).json({ ok: false, error: "Missing apiKey or serialize." });
-    return;
-  }
-
-  try {
-    const statusResult = await requestKiriJson(
-      `${KIRI_STATUS_URL}?serialize=${encodeURIComponent(serialize)}`,
-      apiKey,
-    );
-
-    let download = null;
-    if (statusResult.json?.data?.status === 2) {
-      const modelResult = await requestKiriJson(
-        `${KIRI_MODEL_ZIP_URL}?serialize=${encodeURIComponent(serialize)}`,
-        apiKey,
-      );
-      download = modelResult.json?.data || null;
-    }
-
-    res.status(statusResult.statusCode).json({
-      ok: true,
-      status: statusResult.json,
-      download,
-    });
-  } catch (error) {
-    res.status(502).json({
-      ok: false,
-      error: error.message,
-    });
-  }
-});
-
-app.post("/api/kiri/import", async (req, res) => {
-  const serialize = String(req.body?.serialize || "").trim();
-  const modelUrl = String(req.body?.modelUrl || "").trim();
-
-  if (!serialize || !modelUrl) {
-    res.status(400).json({ ok: false, error: "Missing serialize or modelUrl." });
-    return;
-  }
-
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(modelUrl);
-  } catch {
-    res.status(400).json({ ok: false, error: "Invalid modelUrl." });
-    return;
-  }
-
-  if (parsedUrl.protocol !== "https:") {
-    res.status(400).json({ ok: false, error: "modelUrl must use https." });
-    return;
-  }
-
-  const targetDir = path.join(KIRI_MODELS_DIR, serialize);
-  const zipPath = path.join(targetDir, `${serialize}.zip`);
-  const plyPath = path.join(targetDir, "3DGS.ply");
-  const camerasPath = path.join(targetDir, "cameras.json");
-
-  fs.mkdirSync(targetDir, { recursive: true });
-
-  if (!fs.existsSync(plyPath)) {
-    try {
-      await runExecFile(
-        "curl",
-        ["--silent", "--show-error", "--location", "--output", zipPath, modelUrl],
-        { cwd: __dirname },
-      );
-      await runExecFile("unzip", ["-o", zipPath, "-d", targetDir], { cwd: __dirname });
-    } catch (error) {
-      res.status(502).json({
-        ok: false,
-        error: error.stderr || error.stdout || error.message,
-      });
-      return;
-    }
-  }
-
-  if (!fs.existsSync(plyPath)) {
-    res.status(500).json({
-      ok: false,
-      error: "3DGS.ply was not found after extracting the KIRI ZIP.",
-    });
-    return;
-  }
-
-  res.json({
-    ok: true,
-    serialize,
-    plyUrl: `/kiri-models/${serialize}/3DGS.ply`,
-    camerasUrl: fs.existsSync(camerasPath) ? `/kiri-models/${serialize}/cameras.json` : null,
-    viewerUrl: `/splat-viewer?url=${encodeURIComponent(
-      `${req.protocol}://${req.get("host")}/kiri-models/${serialize}/3DGS.ply`,
-    )}`,
-  });
-});
-
-// ---------- 3D Gaussian Splat pipeline (Lambda Cloud) ----------------------
 
 function newSplatJobId() {
   const ts = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
-  const rand = Math.random().toString(36).slice(2, 6);
+  const rand = crypto.randomBytes(2).toString("hex");
   return `job-${ts}-${rand}`;
 }
 
@@ -512,148 +593,6 @@ function readJsonSafe(filePath) {
   }
 }
 
-function readEvents(workspace, limit = 200) {
-  const eventsPath = path.join(workspace, "events.jsonl");
-  if (!fs.existsSync(eventsPath)) return [];
-  const lines = fs.readFileSync(eventsPath, "utf8").trim().split("\n").filter(Boolean);
-  const tail = lines.slice(-limit);
-  return tail
-    .map((line) => {
-      try { return JSON.parse(line); } catch { return null; }
-    })
-    .filter(Boolean);
-}
-
-function jobStatus(jobId) {
-  const workspace = splatWorkspaceFor(jobId);
-  if (!fs.existsSync(workspace)) return null;
-  const result = readJsonSafe(path.join(workspace, "result.json"));
-  const errorPath = path.join(workspace, "error.json");
-  const error = readJsonSafe(errorPath);
-  const tracked = splatJobs.get(jobId);
-  let state = "running";
-  if (result) state = "completed";
-  else if (error) state = "failed";
-  else if (!tracked) state = "unknown"; // process gone but no result
-
-  const splatRel = `/splat-workspaces/${jobId}/result/scene.splat`;
-  const splatAbs = path.join(workspace, "result", "scene.splat");
-  return {
-    jobId,
-    state,
-    workspace,
-    startedAt: tracked?.startedAt || null,
-    inputPath: tracked?.inputPath || null,
-    splatUrl: fs.existsSync(splatAbs) ? splatRel : null,
-    viewerUrl: fs.existsSync(splatAbs)
-      ? `/splat-viewer?url=${encodeURIComponent(splatRel)}`
-      : null,
-    result,
-    error,
-  };
-}
-
-function defaultSplatInput() {
-  // Prefer the freshest compiled MP4 batch; fall back to raw recordings dir.
-  if (fs.existsSync(EXPORTS_DIR)) {
-    const batches = fs.readdirSync(EXPORTS_DIR)
-      .map((name) => path.join(EXPORTS_DIR, name))
-      .filter((p) => fs.statSync(p).isDirectory())
-      .sort();
-    if (batches.length > 0) return batches[batches.length - 1];
-  }
-  if (fs.existsSync(RECORDINGS_DIR)) return RECORDINGS_DIR;
-  return null;
-}
-
-app.post("/api/splat/jobs", (req, res) => {
-  const body = req.body || {};
-  const jobId = String(body.jobId || newSplatJobId());
-  const workspace = splatWorkspaceFor(jobId);
-  if (fs.existsSync(workspace)) {
-    res.status(409).json({ ok: false, error: `job ${jobId} already exists` });
-    return;
-  }
-
-  const inputPath = String(body.inputPath || defaultSplatInput() || "");
-  if (!inputPath || !fs.existsSync(inputPath)) {
-    res.status(400).json({
-      ok: false,
-      error: `inputPath missing or not found: ${inputPath || "(none)"}`,
-    });
-    return;
-  }
-
-  if (!fs.existsSync(SPLAT_PYTHON)) {
-    res.status(500).json({
-      ok: false,
-      error: `Python interpreter not found at ${SPLAT_PYTHON}. ` +
-        `Create venv: python3 -m venv ${path.join(SPLAT_PKG_DIR, ".venv")} && ` +
-        `${path.join(SPLAT_PKG_DIR, ".venv/bin/pip")} install -e ${SPLAT_PKG_DIR}`,
-    });
-    return;
-  }
-
-  const args = [
-    "-m", "splat", "run", inputPath,
-    "--workspace", workspace,
-    "--job-id", jobId,
-  ];
-  if (body.maxSteps) args.push("--max-steps", String(Number(body.maxSteps)));
-  if (body.framesPerCam) args.push("--frames-per-cam", String(Number(body.framesPerCam)));
-  if (body.sampleFps) args.push("--sample-fps", String(Number(body.sampleFps)));
-  if (body.instanceType) args.push("--instance-type", String(body.instanceType));
-  if (body.region) args.push("--region", String(body.region));
-  if (body.sshKeyName) args.push("--ssh-key-name", String(body.sshKeyName));
-  if (body.sshPrivateKey) args.push("--ssh-private-key", String(body.sshPrivateKey));
-  if (body.keepWarm) args.push("--keep-warm");
-  if (body.noReuse) args.push("--no-reuse");
-
-  fs.mkdirSync(workspace, { recursive: true });
-  const stdoutLog = fs.openSync(path.join(workspace, "stdout.log"), "a");
-  const stderrLog = fs.openSync(path.join(workspace, "stderr.log"), "a");
-
-  const env = { ...process.env, PYTHONUNBUFFERED: "1" };
-  const proc = spawn(SPLAT_PYTHON, args, {
-    cwd: SPLAT_PKG_DIR,
-    env,
-    stdio: ["ignore", stdoutLog, stderrLog],
-    detached: false,
-  });
-
-  splatJobs.set(jobId, {
-    proc,
-    startedAt: new Date().toISOString(),
-    workspace,
-    inputPath,
-  });
-
-  proc.on("exit", (code, signal) => {
-    if (code !== 0 && !fs.existsSync(path.join(workspace, "result.json"))) {
-      const errorPayload = {
-        ok: false,
-        code,
-        signal,
-        finishedAt: new Date().toISOString(),
-        stderrTail: tailFile(path.join(workspace, "stderr.log"), 4096),
-      };
-      fs.writeFileSync(
-        path.join(workspace, "error.json"),
-        JSON.stringify(errorPayload, null, 2),
-      );
-    }
-  });
-
-  res.json({
-    ok: true,
-    jobId,
-    workspace,
-    inputPath,
-    pid: proc.pid,
-    statusUrl: `/api/splat/jobs/${jobId}`,
-  });
-});
-
 function tailFile(filePath, bytes) {
   try {
     const stat = fs.statSync(filePath);
@@ -667,6 +606,141 @@ function tailFile(filePath, bytes) {
     return "";
   }
 }
+
+function readEvents(workspace, limit = 200) {
+  const eventsPath = path.join(workspace, "events.jsonl");
+  if (!fs.existsSync(eventsPath)) return [];
+  const lines = fs.readFileSync(eventsPath, "utf8").trim().split("\n").filter(Boolean);
+  return lines.slice(-limit).map((line) => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+}
+
+function defaultSplatInputs() {
+  if (fs.existsSync(EXPORTS_DIR)) {
+    const batches = fs.readdirSync(EXPORTS_DIR)
+      .map((name) => path.join(EXPORTS_DIR, name))
+      .filter((p) => fs.statSync(p).isDirectory())
+      .sort();
+    if (batches.length > 0) return [batches[batches.length - 1]];
+  }
+  if (fs.existsSync(RECORDINGS_DIR)) return [RECORDINGS_DIR];
+  return [];
+}
+
+function jobStatus(jobId) {
+  const workspace = splatWorkspaceFor(jobId);
+  if (!fs.existsSync(workspace)) return null;
+  const result = readJsonSafe(path.join(workspace, "result.json"));
+  const error = readJsonSafe(path.join(workspace, "error.json"));
+  const tracked = splatJobs.get(jobId);
+  let state = "running";
+  if (result) state = "completed";
+  else if (error) state = "failed";
+  else if (!tracked) state = "unknown";
+
+  const splatRel = `/splat-workspaces/${jobId}/result/scene.splat`;
+  const splatAbs = path.join(workspace, "result", "scene.splat");
+  return {
+    jobId,
+    state,
+    workspace,
+    startedAt: tracked?.startedAt || null,
+    inputPaths: tracked?.inputPaths || null,
+    splatUrl: fs.existsSync(splatAbs) ? splatRel : null,
+    viewerUrl: fs.existsSync(splatAbs)
+      ? `/splat-viewer?url=${encodeURIComponent(splatRel)}`
+      : null,
+    result,
+    error,
+  };
+}
+
+function addNumberArg(args, flag, value) {
+  if (value === undefined || value === null || value === "") return;
+  const number = Number(value);
+  if (Number.isFinite(number)) args.push(flag, String(number));
+}
+
+app.post("/api/splat/jobs", (req, res) => {
+  const body = req.body || {};
+  const jobId = String(body.jobId || newSplatJobId()).replace(/[^A-Za-z0-9_.-]/g, "-");
+  const workspace = splatWorkspaceFor(jobId);
+  if (fs.existsSync(workspace)) {
+    res.status(409).json({ ok: false, error: `job ${jobId} already exists` });
+    return;
+  }
+
+  const inputPaths = Array.isArray(body.inputPaths)
+    ? body.inputPaths.map(String).filter(Boolean)
+    : body.inputPath ? [String(body.inputPath)] : defaultSplatInputs();
+  if (!inputPaths.length || inputPaths.some((inputPath) => !fs.existsSync(inputPath))) {
+    res.status(400).json({ ok: false, error: "inputPath/inputPaths missing or not found" });
+    return;
+  }
+  if (!fs.existsSync(SPLAT_PYTHON)) {
+    res.status(500).json({
+      ok: false,
+      error: `Python interpreter not found at ${SPLAT_PYTHON}`,
+    });
+    return;
+  }
+
+  const args = [
+    "-m", "splat", "mast3r-instantsplat",
+    ...inputPaths,
+    "--workspace", workspace,
+    "--job-id", jobId,
+  ];
+  addNumberArg(args, "--iterations", body.iterations);
+  addNumberArg(args, "--timestamps-per-feed", body.timestampsPerFeed);
+  addNumberArg(args, "--max-images", body.maxImages);
+  addNumberArg(args, "--long-edge", body.longEdge);
+  addNumberArg(args, "--image-size", body.imageSize);
+  addNumberArg(args, "--temporal-neighbors", body.temporalNeighbors);
+  addNumberArg(args, "--cross-view-drift", body.crossViewDrift);
+  if (body.instanceType) args.push("--instance-type", String(body.instanceType));
+  if (body.region) args.push("--region", String(body.region));
+  if (body.sshKeyName) args.push("--ssh-key-name", String(body.sshKeyName));
+  if (body.sshPrivateKey) args.push("--ssh-private-key", String(body.sshPrivateKey));
+  if (body.keepWarm) args.push("--keep-warm");
+  if (body.noReuse) args.push("--no-reuse");
+
+  fs.mkdirSync(workspace, { recursive: true });
+  const stdoutLog = fs.openSync(path.join(workspace, "stdout.log"), "a");
+  const stderrLog = fs.openSync(path.join(workspace, "stderr.log"), "a");
+  const proc = spawn(SPLAT_PYTHON, args, {
+    cwd: SPLAT_PKG_DIR,
+    env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    stdio: ["ignore", stdoutLog, stderrLog],
+    detached: false,
+  });
+
+  splatJobs.set(jobId, {
+    proc,
+    startedAt: new Date().toISOString(),
+    workspace,
+    inputPaths,
+  });
+
+  proc.on("exit", (code, signal) => {
+    splatJobs.delete(jobId);
+    if (code !== 0 && !fs.existsSync(path.join(workspace, "result.json"))) {
+      fs.writeFileSync(
+        path.join(workspace, "error.json"),
+        JSON.stringify({
+          ok: false,
+          code,
+          signal,
+          finishedAt: new Date().toISOString(),
+          stderrTail: tailFile(path.join(workspace, "stderr.log"), 4096),
+        }, null, 2),
+      );
+    }
+  });
+
+  res.json({ ok: true, jobId, workspace, inputPaths, pid: proc.pid, statusUrl: `/api/splat/jobs/${jobId}` });
+});
 
 app.get("/api/splat/jobs", (_req, res) => {
   if (!fs.existsSync(SPLAT_WORKSPACES_DIR)) {
@@ -693,22 +767,42 @@ app.get("/api/splat/jobs/:id", (req, res) => {
 app.delete("/api/splat/jobs/:id", (req, res) => {
   const tracked = splatJobs.get(req.params.id);
   if (tracked && tracked.proc.exitCode === null) {
-    try { tracked.proc.kill("SIGTERM"); } catch (_) { /* ignore */ }
+    try { tracked.proc.kill("SIGTERM"); } catch {}
   }
   splatJobs.delete(req.params.id);
   res.json({ ok: true });
 });
 
-app.use(
-  "/splat-workspaces",
-  express.static(SPLAT_WORKSPACES_DIR, {
-    setHeaders(res, filePath) {
-      if ([".splat", ".ksplat", ".ply", ".spz"].includes(path.extname(filePath).toLowerCase())) {
-        res.setHeader("Content-Type", "application/octet-stream");
-      }
-    },
-  }),
-);
+app.get("/iphone-safari", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "iphone-safari.html"));
+});
+
+app.get("/raspi", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "raspi.html"));
+});
+
+app.get("/publisher", (_req, res) => {
+  res.redirect(302, "/raspi");
+});
+
+app.get("/dev-cert.pem", (_req, res) => {
+  res.download(CERT_PATH);
+});
+
+app.get("/phone-publish", (req, res) => {
+  const query = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(302, `/iphone-safari${query}`);
+});
+
+// MAVLink bridge WS proxy — only cam1 is the airborne unit. Browser connects
+// to wss://<host>/api/pi/cam1/mavlink and we forward to ws://pi-cam1.local:8090.
+const mavlinkProxy = createProxyMiddleware({
+  target: "http://pi-cam1.local:8090",
+  changeOrigin: true,
+  ws: true,
+  pathRewrite: { "^/api/pi/cam1/mavlink": "" },
+});
+app.use("/api/pi/cam1/mavlink", mavlinkProxy);
 
 app.use(
   "/mediamtx",
@@ -762,10 +856,9 @@ app.use(
   }),
 );
 
-app.use("/exports", express.static(path.join(__dirname, "exports")));
 app.use(
-  "/kiri-models",
-  express.static(KIRI_MODELS_DIR, {
+  "/splat-workspaces",
+  express.static(SPLAT_WORKSPACES_DIR, {
     setHeaders(res, filePath) {
       if ([".splat", ".ksplat", ".ply", ".spz"].includes(path.extname(filePath).toLowerCase())) {
         res.setHeader("Content-Type", "application/octet-stream");
@@ -789,7 +882,13 @@ const credentials = {
   key: fs.readFileSync(KEY_PATH),
 };
 
-https.createServer(credentials, app).listen(PORT, "0.0.0.0", () => {
+const httpsServer = https.createServer(credentials, app);
+httpsServer.on("upgrade", (req, socket, head) => {
+  if (req.url && req.url.startsWith("/api/pi/cam1/mavlink")) {
+    mavlinkProxy.upgrade(req, socket, head);
+  }
+});
+httpsServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Dashboard listening on https://0.0.0.0:${PORT}`);
 });
 

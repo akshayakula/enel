@@ -1,0 +1,11 @@
+[Unit]
+Description=enel: auto-join open Wi-Fi starting with J
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/wifi-j-autojoin.sh
+
+[Install]
+WantedBy=multi-user.target
