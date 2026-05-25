@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "enel-splat"
+version = "0.1.0"
+description = "Drone-video → 3D Gaussian Splat pipeline using Lambda Cloud GPUs."
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.31",
+    "tqdm>=4.66",
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+]
+
+[project.scripts]
+splat = "splat.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["splat*"]
+
+[tool.setuptools.package-data]
+"splat.lambda_cloud" = ["*.sh"]
+"splat.remote" = ["*.py", "*.sh"]

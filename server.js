@@ -33,9 +33,26 @@ const PUBLIC_DIR = path.join(__dirname, "web_rtc_app", "public");
 const CERT_DIR = path.join(__dirname, "certs");
 const CERT_PATH = path.join(CERT_DIR, "dev-cert.pem");
 const KEY_PATH = path.join(CERT_DIR, "dev-key.pem");
+const GAUSSIAN_SPLATS_BUILD_DIR = path.join(
+  __dirname,
+  "node_modules",
+  "@mkkellogg",
+  "gaussian-splats-3d",
+  "build",
+);
+const THREE_BUILD_DIR = path.join(__dirname, "node_modules", "three", "build");
+const SPLAT_PKG_DIR = path.join(__dirname, "video_to_gaussian_splat");
+const SPLAT_WORKSPACES_DIR = path.join(SPLAT_PKG_DIR, "workspaces");
+const SPLAT_PYTHON = process.env.SPLAT_PYTHON
+  || path.join(SPLAT_PKG_DIR, ".venv", "bin", "python");
+const RECORDINGS_DIR = path.join(__dirname, "recordings");
+const EXPORTS_DIR = path.join(__dirname, "exports", "compiled");
+const splatJobs = new Map(); // jobId -> { proc, startedAt, workspace, inputPaths }
 
 app.use(express.static(PUBLIC_DIR));
 app.use(express.json({ limit: "8mb" }));
+app.use("/vendor/gaussian-splats-3d", express.static(GAUSSIAN_SPLATS_BUILD_DIR));
+app.use("/vendor/three", express.static(THREE_BUILD_DIR));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, protocol: "https" });
@@ -494,6 +511,268 @@ app.get("/viewer", (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "viewer.html"));
 });
 
+app.get("/splat-viewer", (_req, res) => {
+  res.sendFile(path.join(PUBLIC_DIR, "splat-viewer.html"));
+});
+
+function listSplatFiles(rootDir, urlRoot, sourceLabel, options = {}) {
+  if (!fs.existsSync(rootDir)) return [];
+
+  const extensions = new Set([".splat", ".ksplat", ".ply", ".spz"]);
+  const include = options.include || (() => true);
+  const rootResolved = path.resolve(rootDir);
+  const items = [];
+
+  function walk(dir) {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith(".")) continue;
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!extensions.has(path.extname(entry.name).toLowerCase())) continue;
+      const rel = path.relative(rootResolved, abs);
+      if (!include(rel, abs)) continue;
+      const stat = fs.statSync(abs);
+      const relUrl = rel.split(path.sep).map(encodeURIComponent).join("/");
+      const parts = rel.split(path.sep);
+      const jobId = parts.find((part) => part.startsWith("job-")) || null;
+      items.push({
+        name: path.basename(abs),
+        label: jobId ? `${jobId} / ${path.basename(abs)}` : rel.split(path.sep).join(" / "),
+        source: sourceLabel,
+        url: `${urlRoot}/${relUrl}`,
+        relativePath: rel,
+        extension: path.extname(entry.name).slice(1).toLowerCase(),
+        sizeBytes: stat.size,
+        mtimeMs: stat.mtimeMs,
+        mtime: stat.mtime.toISOString(),
+        jobId,
+      });
+    }
+  }
+
+  walk(rootResolved);
+  return items;
+}
+
+app.get("/api/splats", (_req, res) => {
+  const pipelineFiles = listSplatFiles(
+    SPLAT_WORKSPACES_DIR,
+    "/splat-workspaces",
+    "Pipeline",
+    { include: (rel) => rel.split(path.sep).includes("result") },
+  );
+  const sceneFiles = listSplatFiles(SCENES_DIR, "/scenes", "Scenes");
+  const files = [...pipelineFiles, ...sceneFiles].sort((a, b) => {
+    const sceneBiasA = a.name === "scene.splat" ? 1 : 0;
+    const sceneBiasB = b.name === "scene.splat" ? 1 : 0;
+    if (sceneBiasA !== sceneBiasB) return sceneBiasB - sceneBiasA;
+    return b.mtimeMs - a.mtimeMs;
+  });
+  res.json({ ok: true, files, defaultUrl: files[0]?.url || null });
+});
+
+function newSplatJobId() {
+  const ts = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+  const rand = crypto.randomBytes(2).toString("hex");
+  return `job-${ts}-${rand}`;
+}
+
+function splatWorkspaceFor(jobId) {
+  return path.join(SPLAT_WORKSPACES_DIR, jobId);
+}
+
+function readJsonSafe(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function tailFile(filePath, bytes) {
+  try {
+    const stat = fs.statSync(filePath);
+    const start = Math.max(0, stat.size - bytes);
+    const fd = fs.openSync(filePath, "r");
+    const buf = Buffer.alloc(stat.size - start);
+    fs.readSync(fd, buf, 0, buf.length, start);
+    fs.closeSync(fd);
+    return buf.toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+function readEvents(workspace, limit = 200) {
+  const eventsPath = path.join(workspace, "events.jsonl");
+  if (!fs.existsSync(eventsPath)) return [];
+  const lines = fs.readFileSync(eventsPath, "utf8").trim().split("\n").filter(Boolean);
+  return lines.slice(-limit).map((line) => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter(Boolean);
+}
+
+function defaultSplatInputs() {
+  if (fs.existsSync(EXPORTS_DIR)) {
+    const batches = fs.readdirSync(EXPORTS_DIR)
+      .map((name) => path.join(EXPORTS_DIR, name))
+      .filter((p) => fs.statSync(p).isDirectory())
+      .sort();
+    if (batches.length > 0) return [batches[batches.length - 1]];
+  }
+  if (fs.existsSync(RECORDINGS_DIR)) return [RECORDINGS_DIR];
+  return [];
+}
+
+function jobStatus(jobId) {
+  const workspace = splatWorkspaceFor(jobId);
+  if (!fs.existsSync(workspace)) return null;
+  const result = readJsonSafe(path.join(workspace, "result.json"));
+  const error = readJsonSafe(path.join(workspace, "error.json"));
+  const tracked = splatJobs.get(jobId);
+  let state = "running";
+  if (result) state = "completed";
+  else if (error) state = "failed";
+  else if (!tracked) state = "unknown";
+
+  const splatRel = `/splat-workspaces/${jobId}/result/scene.splat`;
+  const splatAbs = path.join(workspace, "result", "scene.splat");
+  return {
+    jobId,
+    state,
+    workspace,
+    startedAt: tracked?.startedAt || null,
+    inputPaths: tracked?.inputPaths || null,
+    splatUrl: fs.existsSync(splatAbs) ? splatRel : null,
+    viewerUrl: fs.existsSync(splatAbs)
+      ? `/splat-viewer?url=${encodeURIComponent(splatRel)}`
+      : null,
+    result,
+    error,
+  };
+}
+
+function addNumberArg(args, flag, value) {
+  if (value === undefined || value === null || value === "") return;
+  const number = Number(value);
+  if (Number.isFinite(number)) args.push(flag, String(number));
+}
+
+app.post("/api/splat/jobs", (req, res) => {
+  const body = req.body || {};
+  const jobId = String(body.jobId || newSplatJobId()).replace(/[^A-Za-z0-9_.-]/g, "-");
+  const workspace = splatWorkspaceFor(jobId);
+  if (fs.existsSync(workspace)) {
+    res.status(409).json({ ok: false, error: `job ${jobId} already exists` });
+    return;
+  }
+
+  const inputPaths = Array.isArray(body.inputPaths)
+    ? body.inputPaths.map(String).filter(Boolean)
+    : body.inputPath ? [String(body.inputPath)] : defaultSplatInputs();
+  if (!inputPaths.length || inputPaths.some((inputPath) => !fs.existsSync(inputPath))) {
+    res.status(400).json({ ok: false, error: "inputPath/inputPaths missing or not found" });
+    return;
+  }
+  if (!fs.existsSync(SPLAT_PYTHON)) {
+    res.status(500).json({
+      ok: false,
+      error: `Python interpreter not found at ${SPLAT_PYTHON}`,
+    });
+    return;
+  }
+
+  const args = [
+    "-m", "splat", "mast3r-instantsplat",
+    ...inputPaths,
+    "--workspace", workspace,
+    "--job-id", jobId,
+  ];
+  addNumberArg(args, "--iterations", body.iterations);
+  addNumberArg(args, "--timestamps-per-feed", body.timestampsPerFeed);
+  addNumberArg(args, "--max-images", body.maxImages);
+  addNumberArg(args, "--long-edge", body.longEdge);
+  addNumberArg(args, "--image-size", body.imageSize);
+  addNumberArg(args, "--temporal-neighbors", body.temporalNeighbors);
+  addNumberArg(args, "--cross-view-drift", body.crossViewDrift);
+  if (body.instanceType) args.push("--instance-type", String(body.instanceType));
+  if (body.region) args.push("--region", String(body.region));
+  if (body.sshKeyName) args.push("--ssh-key-name", String(body.sshKeyName));
+  if (body.sshPrivateKey) args.push("--ssh-private-key", String(body.sshPrivateKey));
+  if (body.keepWarm) args.push("--keep-warm");
+  if (body.noReuse) args.push("--no-reuse");
+
+  fs.mkdirSync(workspace, { recursive: true });
+  const stdoutLog = fs.openSync(path.join(workspace, "stdout.log"), "a");
+  const stderrLog = fs.openSync(path.join(workspace, "stderr.log"), "a");
+  const proc = spawn(SPLAT_PYTHON, args, {
+    cwd: SPLAT_PKG_DIR,
+    env: { ...process.env, PYTHONUNBUFFERED: "1" },
+    stdio: ["ignore", stdoutLog, stderrLog],
+    detached: false,
+  });
+
+  splatJobs.set(jobId, {
+    proc,
+    startedAt: new Date().toISOString(),
+    workspace,
+    inputPaths,
+  });
+
+  proc.on("exit", (code, signal) => {
+    splatJobs.delete(jobId);
+    if (code !== 0 && !fs.existsSync(path.join(workspace, "result.json"))) {
+      fs.writeFileSync(
+        path.join(workspace, "error.json"),
+        JSON.stringify({
+          ok: false,
+          code,
+          signal,
+          finishedAt: new Date().toISOString(),
+          stderrTail: tailFile(path.join(workspace, "stderr.log"), 4096),
+        }, null, 2),
+      );
+    }
+  });
+
+  res.json({ ok: true, jobId, workspace, inputPaths, pid: proc.pid, statusUrl: `/api/splat/jobs/${jobId}` });
+});
+
+app.get("/api/splat/jobs", (_req, res) => {
+  if (!fs.existsSync(SPLAT_WORKSPACES_DIR)) {
+    res.json({ ok: true, jobs: [] });
+    return;
+  }
+  const jobs = fs.readdirSync(SPLAT_WORKSPACES_DIR)
+    .filter((name) => name.startsWith("job-"))
+    .map((name) => jobStatus(name))
+    .filter(Boolean)
+    .sort((a, b) => (b.jobId > a.jobId ? 1 : -1));
+  res.json({ ok: true, jobs });
+});
+
+app.get("/api/splat/jobs/:id", (req, res) => {
+  const status = jobStatus(req.params.id);
+  if (!status) {
+    res.status(404).json({ ok: false, error: "no such job" });
+    return;
+  }
+  res.json({ ok: true, ...status, events: readEvents(status.workspace, 500) });
+});
+
+app.delete("/api/splat/jobs/:id", (req, res) => {
+  const tracked = splatJobs.get(req.params.id);
+  if (tracked && tracked.proc.exitCode === null) {
+    try { tracked.proc.kill("SIGTERM"); } catch {}
+  }
+  splatJobs.delete(req.params.id);
+  res.json({ ok: true });
+});
+
 app.get("/iphone-safari", (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "iphone-safari.html"));
 });
@@ -574,6 +853,17 @@ app.use(
     changeOrigin: true,
     ws: false,
     pathRewrite: { "^/whip-session": "" },
+  }),
+);
+
+app.use(
+  "/splat-workspaces",
+  express.static(SPLAT_WORKSPACES_DIR, {
+    setHeaders(res, filePath) {
+      if ([".splat", ".ksplat", ".ply", ".spz"].includes(path.extname(filePath).toLowerCase())) {
+        res.setHeader("Content-Type", "application/octet-stream");
+      }
+    },
   }),
 );
 

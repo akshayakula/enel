@@ -9,5 +9,11 @@ recordings/
 __pycache__/
 .env
 .env.local
+tmp/
+video_to_gaussian_splat/.env
+video_to_gaussian_splat/.venv/
+video_to_gaussian_splat/enel_splat.egg-info/
+video_to_gaussian_splat/workspaces/
+*.py[cod]
 web_rtc_app/public/scenes/*.splat
 web_rtc_app/public/scenes/*.ply

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gaussian Splat Viewer</title>
+    <link rel="stylesheet" href="/splat-viewer.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "/vendor/three/three.module.js",
+          "@mkkellogg/gaussian-splats-3d": "/vendor/gaussian-splats-3d/gaussian-splats-3d.module.js"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <main class="splat-app">
+      <section class="viewer-shell" aria-label="Splat scene">
+        <div id="viewerRoot" class="viewer-root"></div>
+        <div class="drop-target" id="dropTarget" hidden>
+          <div>
+            <strong>Drop splat file</strong>
+            <span>.splat, .ksplat, .ply, .spz</span>
+          </div>
+        </div>
+      </section>
+
+      <aside class="sidebar" aria-label="Splat controls">
+        <header class="sidebar-header">
+          <div>
+            <h1>Gaussian Splat Viewer</h1>
+            <p id="activeSceneName">No scene loaded</p>
+          </div>
+          <a class="icon-link" href="/viewer" aria-label="Back to camera wall" title="Back to camera wall">
+            <span aria-hidden="true">↩</span>
+          </a>
+        </header>
+
+        <section class="control-band">
+          <div class="status-row">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">Idle</span>
+          </div>
+          <div class="progress-track" aria-hidden="true">
+            <div id="progressBar"></div>
+          </div>
+        </section>
+
+        <section class="control-grid">
+          <label class="field">
+            <span>Scene URL</span>
+            <input id="sceneUrlInput" type="url" placeholder="/splat-workspaces/.../scene.splat" />
+          </label>
+          <button id="loadUrlButton" class="button primary" type="button">Load</button>
+          <label class="file-button">
+            <input id="fileInput" type="file" accept=".splat,.ksplat,.ply,.spz" />
+            <span>Open File</span>
+          </label>
+        </section>
+
+        <section class="toolbar" aria-label="Viewer tools">
+          <button id="resetButton" class="tool-button" type="button" title="Reset camera">⟲</button>
+          <button id="reloadButton" class="tool-button" type="button" title="Reload scene">↻</button>
+          <a id="downloadLink" class="tool-button" href="#" download title="Download scene">↓</a>
+          <label class="select-field">
+            <span>Quality</span>
+            <select id="qualitySelect">
+              <option value="balanced">Balanced</option>
+              <option value="sharp">Sharp</option>
+              <option value="fast">Fast</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="metrics" aria-label="Scene metrics">
+          <div>
+            <span>Splats</span>
+            <strong id="splatCount">-</strong>
+          </div>
+          <div>
+            <span>Size</span>
+            <strong id="fileSize">-</strong>
+          </div>
+          <div>
+            <span>FPS</span>
+            <strong id="fpsValue">-</strong>
+          </div>
+        </section>
+
+        <section class="library">
+          <div class="section-title">
+            <h2>Local Splats</h2>
+            <button id="refreshLibraryButton" class="text-button" type="button">Refresh</button>
+          </div>
+          <div id="libraryList" class="library-list"></div>
+        </section>
+      </aside>
+    </main>
+
+    <script type="module" src="/splat-viewer.js"></script>
+  </body>
+</html>
