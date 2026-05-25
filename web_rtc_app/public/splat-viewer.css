@@ -1,0 +1,389 @@
+:root {
+  color-scheme: dark;
+  --bg: #10110f;
+  --panel: #181a17;
+  --panel-2: #20231f;
+  --line: #34382f;
+  --line-strong: #4d533f;
+  --text: #f4f1e8;
+  --muted: #aaa99f;
+  --accent: #80ed99;
+  --accent-ink: #07130c;
+  --warn: #ffb86c;
+  --danger: #ff6f61;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  min-height: 100vh;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+.splat-app {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  width: 100vw;
+  height: 100vh;
+}
+
+.viewer-shell {
+  position: relative;
+  min-width: 0;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    #050604;
+  background-size: 36px 36px;
+}
+
+.viewer-root {
+  position: absolute;
+  inset: 0;
+}
+
+.viewer-root canvas {
+  display: block;
+  outline: none;
+}
+
+.drop-target {
+  position: absolute;
+  inset: 18px;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--accent);
+  border-radius: 8px;
+  background: rgba(6, 16, 10, 0.76);
+  color: var(--text);
+}
+
+.drop-target[hidden] {
+  display: none;
+}
+
+.drop-target div {
+  display: grid;
+  gap: 6px;
+  text-align: center;
+}
+
+.drop-target span {
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.sidebar {
+  display: grid;
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
+  gap: 14px;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+  background: rgba(24, 26, 23, 0.98);
+  padding: 16px;
+}
+
+.sidebar-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.sidebar-header h1 {
+  margin: 0;
+  font-size: 1.2rem;
+  line-height: 1.15;
+  letter-spacing: 0;
+}
+
+.sidebar-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.icon-link,
+.tool-button,
+.button,
+.file-button,
+.text-button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-height: 38px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.icon-link,
+.tool-button {
+  display: inline-grid;
+  place-items: center;
+  min-width: 38px;
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.control-band {
+  display: grid;
+  gap: 10px;
+}
+
+.status-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.status-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status-dot.loading {
+  background: var(--warn);
+}
+
+.status-dot.ready {
+  background: var(--accent);
+}
+
+.status-dot.error {
+  background: var(--danger);
+}
+
+.progress-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #0b0d0a;
+}
+
+#progressBar {
+  width: 0%;
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms ease;
+}
+
+.control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.field {
+  display: grid;
+  grid-column: 1 / -1;
+  gap: 6px;
+}
+
+.field span,
+.select-field span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.field input,
+.select-field select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10120f;
+  color: var(--text);
+  padding: 10px 11px;
+}
+
+.button,
+.file-button {
+  display: inline-grid;
+  place-items: center;
+  padding: 0 13px;
+  font-weight: 700;
+}
+
+.button.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.file-button {
+  position: relative;
+  background: #10120f;
+  color: var(--text);
+}
+
+.file-button input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
+.select-field {
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 6px;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.metrics div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10120f;
+  padding: 10px;
+}
+
+.metrics span {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.metrics strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9rem;
+}
+
+.library {
+  display: grid;
+  min-height: 0;
+  gap: 10px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.section-title h2 {
+  margin: 0;
+  font-size: 0.9rem;
+  letter-spacing: 0;
+}
+
+.text-button {
+  min-height: 30px;
+  background: transparent;
+  color: var(--accent);
+  padding: 0 8px;
+}
+
+.library-list {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.library-item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10120f;
+  color: var(--text);
+  padding: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.library-item:hover,
+.library-item.active {
+  border-color: var(--accent);
+}
+
+.library-item strong {
+  overflow-wrap: anywhere;
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.library-item span {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+}
+
+.empty-state {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+@media (max-width: 880px) {
+  body {
+    overflow: auto;
+  }
+
+  .splat-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(52vh, 1fr) auto;
+    min-height: 100vh;
+    height: auto;
+  }
+
+  .viewer-shell {
+    min-height: 52vh;
+  }
+
+  .sidebar {
+    border-top: 1px solid var(--line);
+    border-left: 0;
+    overflow: visible;
+  }
+
+  .library-list {
+    max-height: 320px;
+  }
+}

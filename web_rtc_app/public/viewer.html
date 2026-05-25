@@ -19,6 +19,61 @@
         <div class="pill mono" id="serverStatus">Loading...</div>
       </section>
 
+      <section class="panel stack">
+        <div class="controls">
+          <button class="button" id="compileRecordingsButton" type="button">
+            Compile All Cameras
+          </button>
+          <div class="pill mono" id="compileStatus">Idle</div>
+        </div>
+        <div class="controls">
+          <label class="input-group" for="kiriApiKey">
+            <span class="input-label">KIRI API Key</span>
+            <input
+              class="text-input mono"
+              id="kiriApiKey"
+              type="password"
+              placeholder="Paste KIRI API key"
+              autocomplete="off"
+            />
+          </label>
+        </div>
+        <div class="stack" id="compileResults" hidden></div>
+      </section>
+
+      <section class="panel stack">
+        <div class="controls">
+          <strong>KIRI Results</strong>
+          <div class="pill mono" id="kiriResultsStatus">No tracked jobs</div>
+        </div>
+        <div class="stack" id="kiriJobsList"></div>
+      </section>
+
+      <section class="panel stack">
+        <div class="controls">
+          <strong>Lambda Splat Pipeline</strong>
+          <div class="pill mono" id="splatStatus">Idle</div>
+        </div>
+        <div class="controls">
+          <button class="button" id="startSplatButton" type="button">
+            Generate Splat (latest compiled)
+          </button>
+          <label class="input-group" for="splatMaxSteps">
+            <span class="input-label">Max steps</span>
+            <input class="text-input mono" id="splatMaxSteps" type="number" value="7000" min="1000" max="30000" step="500" />
+          </label>
+          <label class="input-group" for="splatFramesPerCam">
+            <span class="input-label">Frames / cam</span>
+            <input class="text-input mono" id="splatFramesPerCam" type="number" value="120" min="20" max="400" step="10" />
+          </label>
+          <label class="input-group" for="splatKeepWarm" style="flex-direction:row;align-items:center;gap:6px">
+            <input id="splatKeepWarm" type="checkbox" />
+            <span class="input-label">Keep instance warm</span>
+          </label>
+        </div>
+        <div class="stack" id="splatJobsList"></div>
+      </section>
+
       <section class="grid" id="videoGrid"></section>
     </main>
 

@@ -137,6 +137,26 @@ video {
   align-items: center;
 }
 
+.input-group {
+  display: grid;
+  gap: 6px;
+  min-width: min(520px, 100%);
+}
+
+.input-label {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.text-input {
+  width: min(520px, 100%);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  padding: 12px 14px;
+}
+
 .button {
   border: 0;
   border-radius: 12px;
@@ -145,6 +165,41 @@ video {
   padding: 12px 16px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.7;
+  cursor: progress;
+}
+
+.button-secondary {
+  background: rgba(128, 237, 153, 0.14);
+  color: var(--accent);
+  border: 1px solid rgba(128, 237, 153, 0.28);
+}
+
+.result-copy {
+  margin: 8px 0 0;
+  color: var(--muted);
+  word-break: break-word;
+}
+
+.meta-list a {
+  color: var(--accent);
+}
+
+.result-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.job-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  padding: 14px;
 }
 
 .mono {
