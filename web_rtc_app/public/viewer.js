@@ -1,6 +1,6 @@
 const STREAM_IDS = ["cam1", "cam2", "cam3", "cam4"];
-const NODE_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
-const NODE_ROLES  = { cam1: "airborne", cam2: "ground", cam3: "ground", cam4: "ground" };
+const NODE_LABELS = { cam1: "gnd-1", cam2: "gnd-2", cam3: "gnd-3", cam4: "gnd-4" };
+const NODE_ROLES  = { cam1: "ground", cam2: "ground", cam3: "ground", cam4: "ground" };
 const STATE_POLL_MS = 3000;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -110,9 +110,17 @@ function buildCamCard(container, streamId) {
   video.playsInline = true;
   video.muted = true;
   videoWrap.appendChild(video);
+  const fallback = document.createElement("video");
+  fallback.className = "cam-fallback";
+  fallback.src = `/fallbacks/${streamId}.mp4`;
+  fallback.autoplay = true;
+  fallback.loop = true;
+  fallback.playsInline = true;
+  fallback.muted = true;
+  videoWrap.appendChild(fallback);
   const scanline = el("div", "cam-scanline");
   videoWrap.appendChild(scanline);
-  const noSig = el("div", "cam-nosig mono", "NO SIGNAL");
+  const noSig = el("div", "cam-nosig mono", "no signal");
   videoWrap.appendChild(noSig);
 
   const stats = el("div", "cam-stats mono");
@@ -150,7 +158,7 @@ function buildCamCard(container, streamId) {
   btnOff.appendChild(offFill);
   btnOff.appendChild(offLabel);
 
-  btnIdentify.addEventListener("click", () => piPost(streamId, "ring/identify", { ttl: 5 }, btnIdentify));
+  btnIdentify.addEventListener("click", () => sendCommand(streamId, "identify", { ttl: 5 }, btnIdentify));
   colorInput.addEventListener("change", () => {
     const { r, g, b } = hexToRgb(colorInput.value);
     piPost(streamId, "ring/color", { r, g, b, ttl: 60 }, colorInput);
@@ -184,7 +192,7 @@ function buildCamCard(container, streamId) {
     wireDroneSocket(streamId, drone);
   }
 
-  return { status, video, bitrateEl, uptimeEl, tempEl, ringEl, noSig, aiOverlay, drone };
+  return { status, video, fallback, bitrateEl, uptimeEl, tempEl, ringEl, noSig, aiOverlay, drone };
 }
 
 // -----------------------------------------------------------------------------
@@ -721,6 +729,31 @@ function hexToRgb(hex) {
   return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff };
 }
 
+// One-shot command via the pull model: write to this dashboard's
+// /api/command/<cam>; the Pi polls every reachable dashboard and executes it.
+// Works on both LAN and remote (Fly) dashboards.
+async function sendCommand(streamId, cmd, args, btn) {
+  const prev = btn && btn.textContent;
+  if (btn && btn.tagName === "BUTTON") btn.disabled = true;
+  try {
+    const res = await fetch(`/api/command/${streamId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cmd, args: args || {} }),
+    });
+    if (btn && btn.tagName === "BUTTON") {
+      btn.textContent = res.ok ? "sent" : "ERR";
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 900);
+    }
+  } catch (err) {
+    if (btn && btn.tagName === "BUTTON") {
+      btn.textContent = "ERR";
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
+    }
+    console.error(`command ${streamId}/${cmd} failed`, err);
+  }
+}
+
 async function piPost(streamId, sub, body, btn) {
   const prev = btn && btn.textContent;
   if (btn && btn.tagName === "BUTTON") btn.disabled = true;
@@ -754,7 +787,8 @@ function attachReader(streamId, baseUrl, ui, container) {
       ui.noSig.style.display = "none";
     },
     onError: (err) => {
-      ui.status.textContent = "offline";
+      ui.video.srcObject = null;
+      ui.status.textContent = "sim";
       ui.status.className = "cam-status mono offline";
       container.dataset.state = "offline";
       ui.noSig.style.display = "";
@@ -1923,199 +1957,6 @@ function wireSplatChrome() {
 
 wireSplatChrome();
 
-// ---------------------------------------------------------------------------
-// Splat bird's-eye view — loads the splat with ?view=topdown, shows a spinner
-// until the child frame postMessages "enel-splat-ready", then renders unit
-// + POI markers over the rendered scene using minimap world coords.
-// ---------------------------------------------------------------------------
-
-const SPLAT_BE_KEY = "enel.splatBe.activated.v1";
-const SPLAT_BE_URL = "/splat/?view=topdown&url=/scenes/stump.splat";
-let splatBeActivated = false;
-let splatBeReady = false;
-
-function setBeState(label, cls = "") {
-  const s = document.getElementById("splatBeState");
-  if (!s) return;
-  s.textContent = label;
-  s.className = `splat-be-state mono ${cls}`.trim();
-}
-
-function ensureBeOverlaySvg() {
-  const ov = document.getElementById("splatBeOverlay");
-  if (!ov) return null;
-  let svg = ov.querySelector("svg");
-  if (svg) return svg;
-  svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("viewBox", `0 0 ${MAP_VB_W} ${MAP_VB_H}`);
-  svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
-  ov.appendChild(svg);
-  return svg;
-}
-
-function renderBeOverlay() {
-  const svg = ensureBeOverlaySvg();
-  if (!svg || !splatBeActivated || !splatBeReady) return;
-  svg.innerHTML = "";
-
-  // POI beams (under units)
-  if (mmPOI) {
-    const px = mmPOI.x * MAP_VB_W;
-    const py = mmPOI.y * MAP_VB_H;
-    for (const id of STREAM_IDS) {
-      const s = mmState[id]; if (!s) continue;
-      const ux = s.x * MAP_VB_W, uy = s.y * MAP_VB_H;
-      const line = document.createElementNS(SVG_NS, "line");
-      line.setAttribute("x1", ux); line.setAttribute("y1", uy);
-      line.setAttribute("x2", px); line.setAttribute("y2", py);
-      line.setAttribute("class", "be-beam");
-      svg.appendChild(line);
-    }
-  }
-
-  // Units
-  for (const id of STREAM_IDS) {
-    const s = mmState[id]; if (!s) continue;
-    const role = NODE_ROLES[id];
-    const live = readyState.get(id);
-    const g = document.createElementNS(SVG_NS, "g");
-    g.setAttribute("class", `be-unit role-${role}${live ? "" : " offline"}`);
-    const cx = s.x * MAP_VB_W, cy = s.y * MAP_VB_H;
-    g.setAttribute("transform", `translate(${cx}, ${cy})`);
-
-    const rad = (s.bearing - 90) * Math.PI / 180;
-    const armLen = 30;
-    const tipX = Math.cos(rad) * armLen;
-    const tipY = Math.sin(rad) * armLen;
-
-    const arrow = document.createElementNS(SVG_NS, "line");
-    arrow.setAttribute("class", "be-arrow");
-    arrow.setAttribute("x1", 0); arrow.setAttribute("y1", 0);
-    arrow.setAttribute("x2", tipX); arrow.setAttribute("y2", tipY);
-    g.appendChild(arrow);
-
-    const tip = document.createElementNS(SVG_NS, "circle");
-    tip.setAttribute("class", "be-tip");
-    tip.setAttribute("r", 5);
-    tip.setAttribute("cx", tipX); tip.setAttribute("cy", tipY);
-    g.appendChild(tip);
-
-    const body = document.createElementNS(SVG_NS, "circle");
-    body.setAttribute("class", "be-body");
-    body.setAttribute("r", 10);
-    g.appendChild(body);
-
-    const label = document.createElementNS(SVG_NS, "text");
-    label.setAttribute("class", "be-label");
-    label.setAttribute("dy", "24");
-    label.textContent = NODE_LABELS[id];
-    g.appendChild(label);
-
-    svg.appendChild(g);
-  }
-
-  // POI
-  if (mmPOI) {
-    const g = document.createElementNS(SVG_NS, "g");
-    g.setAttribute("transform", `translate(${mmPOI.x * MAP_VB_W}, ${mmPOI.y * MAP_VB_H})`);
-    const ring = document.createElementNS(SVG_NS, "circle");
-    ring.setAttribute("class", "be-poi-ring");
-    ring.setAttribute("r", 12);
-    g.appendChild(ring);
-    const dot = document.createElementNS(SVG_NS, "circle");
-    dot.setAttribute("class", "be-poi-dot");
-    dot.setAttribute("r", 5);
-    g.appendChild(dot);
-    svg.appendChild(g);
-  }
-}
-
-function activateSplatBe() {
-  if (splatBeActivated) return;
-  splatBeActivated = true;
-  try { localStorage.setItem(SPLAT_BE_KEY, "1"); } catch {}
-
-  const stage = document.getElementById("splatBeStage");
-  const placeholder = document.getElementById("splatBePlaceholder");
-  const spinner = document.getElementById("splatBeSpinner");
-  const btn = document.getElementById("btnSplatBeToggle");
-  if (!stage) return;
-
-  if (placeholder) placeholder.style.display = "none";
-  if (spinner) spinner.style.display = "";
-  setBeState("loading", "loading");
-  if (btn) btn.textContent = "deactivate";
-
-  // Create iframe only on activate — avoids eager 150MB fetch.
-  let iframe = stage.querySelector("iframe");
-  if (!iframe) {
-    iframe = document.createElement("iframe");
-    iframe.id = "splatBeFrame";
-    iframe.setAttribute("title", "gaussian splat bird's-eye");
-    iframe.setAttribute("allow", "xr-spatial-tracking; fullscreen");
-    iframe.src = SPLAT_BE_URL;
-    stage.insertBefore(iframe, stage.firstChild);
-  } else {
-    iframe.src = SPLAT_BE_URL;
-  }
-}
-
-function deactivateSplatBe() {
-  splatBeActivated = false;
-  splatBeReady = false;
-  try { localStorage.setItem(SPLAT_BE_KEY, "0"); } catch {}
-
-  const stage = document.getElementById("splatBeStage");
-  const placeholder = document.getElementById("splatBePlaceholder");
-  const spinner = document.getElementById("splatBeSpinner");
-  const btn = document.getElementById("btnSplatBeToggle");
-  const ov = document.getElementById("splatBeOverlay");
-
-  if (stage) {
-    const iframe = stage.querySelector("iframe");
-    if (iframe) iframe.remove();
-  }
-  if (ov) ov.innerHTML = "";
-  if (placeholder) placeholder.style.display = "";
-  if (spinner) spinner.style.display = "none";
-  setBeState("dormant", "");
-  if (btn) btn.textContent = "activate";
-}
-
-function onSplatBeReady() {
-  splatBeReady = true;
-  const spinner = document.getElementById("splatBeSpinner");
-  if (spinner) spinner.style.display = "none";
-  setBeState("live", "live");
-  renderBeOverlay();
-}
-
-function wireSplatBeChrome() {
-  const btn = document.getElementById("btnSplatBeToggle");
-  if (btn) {
-    btn.addEventListener("click", () => {
-      if (splatBeActivated) deactivateSplatBe();
-      else activateSplatBe();
-    });
-  }
-
-  window.addEventListener("message", (evt) => {
-    const data = evt && evt.data;
-    if (data && data.type === "enel-splat-ready") onSplatBeReady();
-  });
-
-  setInterval(() => { if (splatBeActivated && splatBeReady) renderBeOverlay(); },
-              STATE_POLL_MS);
-
-  // Auto-activate if the user had it on last session.
-  try {
-    if (localStorage.getItem(SPLAT_BE_KEY) === "1") {
-      requestAnimationFrame(() => activateSplatBe());
-    }
-  } catch {}
-}
-
-wireSplatBeChrome();
 wireGeo();
 
 // ---------------------------------------------------------------------------
