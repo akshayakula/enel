@@ -90,7 +90,7 @@ const PHONE_STREAM_SLOTS = ["cam3", "cam4"];
 
 const PI_CONTROL_PORT = 8088;
 const PI_CONTROL_TIMEOUT_MS = 3000;
-const piHostForSlot = (slot) => `pi-${slot}.local`;
+const piHostForSlot = (slot) => slot.replace(/^cam(\d+)$/, "pi-cam-$1.local");
 
 async function currentStreamSlots() {
   const response = await fetch(`${MEDIAMTX_API_BASE}/v3/paths/list`);
@@ -122,8 +122,30 @@ app.get("/api/state", async (_req, res) => {
   }
 });
 
+// One-shot commands use a pull model so Fly.io never has to reach into a Pi's
+// LAN. The browser writes here; pi-control polls this endpoint and executes the
+// newest command it has not seen.
+const commandStore = new Map(); // cam -> { cmd, args, ts }
+
+app.post("/api/command/:cam", (req, res) => {
+  const cam = req.params.cam;
+  if (!STREAM_SLOTS.includes(cam)) return res.status(404).json({ error: "unknown cam" });
+  const cmd = String((req.body && req.body.cmd) || "");
+  if (!cmd) return res.status(400).json({ error: "cmd required" });
+  commandStore.set(cam, { cmd, args: (req.body && req.body.args) || {}, ts: Date.now() });
+  res.json({ ok: true });
+});
+
+app.get("/api/command/:cam", (req, res) => {
+  const cam = req.params.cam;
+  if (!STREAM_SLOTS.includes(cam)) return res.status(404).json({ error: "unknown cam" });
+  const d = commandStore.get(cam);
+  if (!d) return res.json({ cmd: null, ts: 0 });
+  res.json(d);
+});
+
 // Proxy a narrow set of pi-control endpoints per cam id.
-// Example: POST /api/pi/cam1/ring/identify  -> http://pi-cam1.local:8088/ring/identify
+// Example: POST /api/pi/cam1/ring/identify  -> http://pi-cam-1.local:8088/ring/identify
 app.all("/api/pi/:id/:path(*)", async (req, res) => {
   const { id, path: subPath } = req.params;
   if (!STREAM_SLOTS.includes(id)) {

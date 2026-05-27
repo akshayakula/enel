@@ -11,6 +11,7 @@ STREAM_ID=cam1
 
 # --- server ---
 SERVER_HOST=137.66.49.231
+COMMAND_SERVERS=https://enel-stream.fly.dev http://137.66.49.231:3605
 RTSP_PORT=8554
 
 # --- live stream profile ---
