@@ -3,7 +3,8 @@
 # Ring hardware: SK6812 RGBW 16-pixel ring (W28666-C). 4 bytes/LED, GRBW order.
 # LED 0 is physical north. Brightness is hard-capped; colors are gamma-corrected.
 # On power-on it reads the UPS HAT's INA219 over I2C and shows a battery gauge
-# before the lifecycle loop. Once streaming, LED 0 stays red as the north marker.
+# before the lifecycle loop. Once streaming, LED 0 stays red as the north marker
+# and LED 8 stays blue as the user-facing direction.
 import json
 import math
 import os
@@ -24,6 +25,7 @@ LED_STRIP    = ws.SK6812_STRIP_GRBW  # RGBW ring (4 bytes/LED)
 MAX_BRIGHT   = 32      # hard cap (~12.5%) — safe off Pi 5V rail
 GAMMA        = 2.2
 NORTH_LED    = 0
+USER_FACE_LED = 8
 OVERRIDE_PATH = "/run/ring-override.json"
 
 # --- INA219 / UPS HAT battery -------------------------------------------------
@@ -112,16 +114,17 @@ def streamer_failed():
     return subprocess.run(["systemctl", "is-failed", "--quiet", "streamer.service"]).returncode == 0
 
 
-def mark_north(strip):
-    # Persistent orientation marker. User aligns the ring so this LED points
-    # true north; all other effects are read relative to it.
+def mark_orientation(strip):
+    # Persistent orientation markers. Align red to true north; once aligned,
+    # the user faces the blue marker on the opposite side of the ring.
     strip.setPixelColor(NORTH_LED, rgb(1.0, 0.0, 0.0, 0.35))
+    strip.setPixelColor(USER_FACE_LED, rgb(0.0, 0.25, 1.0, 0.35))
 
 
 def clear(strip):
     for i in range(NUM_LEDS):
         strip.setPixelColor(i, 0)
-    mark_north(strip)
+    mark_orientation(strip)
     strip.show()
 
 
@@ -200,7 +203,7 @@ def render(strip, mode, t):
     else:
         clear(strip)
         return
-    mark_north(strip)
+    mark_orientation(strip)
     strip.show()
 
 
@@ -257,7 +260,7 @@ def render_override(strip, o, t):
             strip.setPixelColor(i, rgb(0.2, 1.0, 1.0, lvl))
     elif mode == "compass":
         # Range-scaled compass arc.
-        # - on_target=True  → whole ring green, dim (power cap). No north marker.
+        # - on_target=True  → whole ring green, dim (power cap). No orientation markers.
         # - else            → `count` LEDs centered on bearing_deg, rest dark.
         # Back-compat: if count missing, fall back to `width` Gaussian falloff.
         on_target = bool(o.get("on_target", False))
@@ -271,7 +274,7 @@ def render_override(strip, o, t):
             for i in range(NUM_LEDS):
                 strip.setPixelColor(i, rgb(0.0, 1.0, 0.2, glow))
             strip.show()
-            return  # skip mark_north — all-green overrides orientation marker
+            return  # skip orientation markers: all-green overrides alignment cues
 
         if "count" in o:
             try:
@@ -310,7 +313,7 @@ def render_override(strip, o, t):
     else:
         for i in range(NUM_LEDS):
             strip.setPixelColor(i, rgb(r, g, b, 1.0))
-    mark_north(strip)
+    mark_orientation(strip)
     strip.show()
 
 
