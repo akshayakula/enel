@@ -5,7 +5,7 @@ const overrideHost = (params.get("host") || "").trim();
 const raspiCards = document.getElementById("raspiCards");
 const raspiHostLabel = document.getElementById("raspiHostLabel");
 
-function buildCard(streamId, whipUrl) {
+function buildCard(streamId, rtspUrl) {
   const card = document.createElement("article");
   card.className = "card";
   card.innerHTML = `
@@ -15,11 +15,11 @@ function buildCard(streamId, whipUrl) {
     </div>
     <div class="panel stack">
       <p><strong>Assigned device:</strong> Raspberry Pi for ${streamId}</p>
-      <p><strong>WHIP URL:</strong><br /><span class="mono">${whipUrl}</span></p>
+      <p><strong>RTSP URL:</strong><br /><span class="mono">${rtspUrl}</span></p>
       <ul class="meta-list">
         <li>Disable or omit audio in the Pi publisher config.</li>
         <li>Use this exact stream slot so the viewer wall stays stable.</li>
-        <li>Open the viewer wall separately at `/viewer` on the laptop.</li>
+        <li>Open the viewer wall separately at `/viewer`.</li>
       </ul>
     </div>
   `;
@@ -28,10 +28,10 @@ function buildCard(streamId, whipUrl) {
 
 function start() {
   const host = overrideHost || window.location.hostname;
-  raspiHostLabel.textContent = `WHIP host http://${host}:8889`;
+  raspiHostLabel.textContent = `RTSP host ${host}:8554`;
 
   for (const streamId of STREAM_IDS) {
-    buildCard(streamId, `http://${host}:8889/${streamId}/whip`);
+    buildCard(streamId, `rtsp://${host}:8554/${streamId}`);
   }
 }
 

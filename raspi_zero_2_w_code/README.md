@@ -1,6 +1,6 @@
-# Raspberry Pi Zero 2 W — WebRTC camera publisher (v0)
+# Raspberry Pi Zero 2 W — RTSP camera publisher (v0)
 
-Minimal WHIP publisher for an OV5647 CSI camera. Streams `1280x720@30` H.264
+Minimal RTSP/TCP publisher for an OV5647 CSI camera. Streams `1280x720@30` H.264
 (~2 Mbps) to the laptop's MediaMTX at `cam1`/`cam2`/`cam3`/`cam4`.
 
 **v0 scope:** live video publisher only. No control channel, no burst-stills
@@ -10,7 +10,7 @@ capture, no NeoPixel ring. Those ship in v1.
 
 | File | What |
 |---|---|
-| `streamer.sh` | runs on the Pi: `rpicam-vid` → `ffmpeg -f whip` |
+| `streamer.sh` | runs on the Pi: `rpicam-vid` → `ffmpeg -f rtsp -rtsp_transport tcp` |
 | `streamer.service` | systemd unit that supervises `streamer.sh` |
 | `streamer.conf.example` | config template (identity, server, stream profile) |
 | `provision-sd.sh` | **run on Mac**: writes a filled `streamer.conf` to the SD's `bootfs` |
@@ -36,11 +36,11 @@ When done, the SD will re-mount as `bootfs` under `/Volumes/bootfs`.
 From the repo root:
 
 ```bash
-./raspi_zero_2_w_code/provision-sd.sh cam1 192.168.1.248 pi-cam1
+./raspi_zero_2_w_code/provision-sd.sh cam1 137.66.49.231 pi-cam1
 ```
 
 Arguments: `<stream-id> <server-host> [pi-name]`. The server host is your
-Mac's LAN IP (or `laptop.local` if mDNS resolves it on the Pi's network).
+Mac's LAN IP for local development, or `137.66.49.231` for the deployed Fly app.
 
 Eject the SD from the Mac, insert into the Pi, power on.
 
@@ -52,7 +52,7 @@ Wait ~60 s after power-on for the Pi to join WiFi, then:
 ./raspi_zero_2_w_code/bootstrap-pi.sh pi-cam1.local akshay
 ```
 
-This SSH-installs `ffmpeg` (static 7.1+ with WHIP support), drops in
+This SSH-installs `ffmpeg`, drops in
 `streamer.sh` and the systemd unit, and starts the service. Takes ~2 minutes
 the first time (downloads ffmpeg).
 
@@ -65,7 +65,7 @@ ssh akshay@pi-cam1.local 'journalctl -u streamer -f'
 Open the dashboard and the `cam1` tile should go live:
 
 ```text
-https://192.168.1.248:3605/viewer
+https://enel-stream.fly.dev/viewer
 ```
 
 ## Changing config later

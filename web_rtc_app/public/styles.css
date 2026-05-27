@@ -445,6 +445,8 @@ body.booted  > main.flow-page {
   font-size: 0.72rem;
   cursor: pointer;
   border-radius: 2px;
+  text-align: center;
+  text-decoration: none;
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
@@ -1160,12 +1162,22 @@ body.booted  > main.flow-page {
   margin-top: 4px;
   font-variant-numeric: tabular-nums;
 }
-.fusion-scan-btn {
-  display: inline-block;
+.fusion-actions {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
   margin-top: 8px;
+}
+.fusion-scan-btn {
+  flex: 0 0 auto;
   padding: 4px 12px;
   min-width: 110px;
   letter-spacing: 0.06em;
+}
+.fusion-reset-btn {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  color: var(--dim);
 }
 .fusion-scan-btn:disabled {
   opacity: 0.6;
@@ -1299,6 +1311,114 @@ body.booted  > main.flow-page {
   color: var(--amber);
 }
 .splat-badge.poi::before { background: var(--amber); }
+
+/* ---------- Mapping sessions ---------- */
+.sessions-section {
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.sessions-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.sessions-left {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.sessions-title {
+  font-size: 0.82rem;
+  color: var(--text);
+  letter-spacing: 0.04em;
+}
+.sessions-count {
+  color: var(--cyan);
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 2px;
+}
+.session-list {
+  display: grid;
+  gap: 8px;
+}
+.session-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  background: rgba(8, 11, 13, 0.72);
+  border-radius: 2px;
+}
+.session-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.session-main strong,
+.session-main span,
+.session-main em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-main strong {
+  color: var(--text);
+  font-size: 0.82rem;
+}
+.session-main span {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.session-main em {
+  color: var(--cyan);
+  font-size: 0.7rem;
+  font-style: normal;
+}
+.session-log {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
+.session-log span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-status {
+  color: var(--muted);
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border: 1px solid var(--line-2);
+  border-radius: 2px;
+}
+.session-row.completed .session-status { color: #a3e0a3; border-color: rgba(163, 224, 163, 0.45); }
+.session-row.failed .session-status { color: #ff9b9b; border-color: rgba(255, 155, 155, 0.45); }
+.session-row.cancelled .session-status { color: var(--dim); border-color: var(--line-2); }
+.session-row.recording .session-status,
+.session-row.lambda-running .session-status,
+.session-row.uploaded .session-status {
+  color: var(--accent);
+  border-color: rgba(214, 161, 74, 0.45);
+}
+.session-open {
+  padding: 4px 10px;
+}
+.session-empty {
+  padding: 12px;
+  color: var(--muted);
+  border: 1px dashed var(--line);
+  border-radius: 2px;
+}
 
 /* ---------- Splat bird's-eye ---------- */
 .splat-be-section {

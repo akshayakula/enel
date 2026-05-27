@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>iPhone Safari Publisher</title>
+    <title>Phone Camera Publisher</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
     <main class="page">
       <section class="header">
         <div>
-          <h1>iPhone Safari Publisher</h1>
+          <h1>Phone Camera Publisher</h1>
           <p>
-            Video-only publisher for iPhone Safari. Choose a stream slot and
-            send the camera feed directly to the local WHIP endpoint.
+            Video-only phone publisher for the same cam1-cam4 slots as the Pis.
+            The viewer records every live slot from MediaMTX for Lambda mapping.
           </p>
         </div>
         <div class="pill mono" id="publishStatus">Idle</div>
@@ -28,8 +28,8 @@
           </p>
           <ul class="meta-list">
             <li>This app requests camera access only. Audio is explicitly disabled.</li>
-            <li>Use Safari on iPhone for the best compatibility with secure local camera capture.</li>
-            <li>When you are done, tap Stop so the WHIP session is torn down cleanly.</li>
+            <li>Use Safari on iPhone or Chrome on Android over HTTPS for camera capture.</li>
+            <li>When you are done, tap Stop so the publisher session is torn down cleanly.</li>
           </ul>
           <div class="controls">
             <button class="button" id="stopButton" disabled>Stop Stream</button>

@@ -1,4 +1,4 @@
-# enel Pi streamer config (v0 — live WHIP publisher only)
+# enel Pi streamer config (v0 — live RTSP publisher)
 #
 # This file is sourced by streamer.sh. It lives on the FAT boot
 # partition so it can be edited from any computer (SD card reader).
@@ -10,8 +10,8 @@ PI_NAME=pi-cam1
 STREAM_ID=cam1
 
 # --- server ---
-SERVER_HOST=192.168.1.248
-WHIP_PORT=8889
+SERVER_HOST=137.66.49.231
+RTSP_PORT=8554
 
 # --- live stream profile ---
 WIDTH=1280

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-shot installer: SSH into a freshly-booted Pi, install ffmpeg-static (WHIP-capable),
+# One-shot installer: SSH into a freshly-booted Pi, install ffmpeg,
 # drop in streamer.sh + streamer.service, enable and start the service.
 #
 # Usage:
@@ -22,7 +22,7 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Pinned ffmpeg static build (has -f whip support from 7.1+).
+# Pinned ffmpeg static build.
 # BtbN builds are master/rolling; we use the "latest" arm64 GPL tarball here.
 # If you need reproducibility, pin to a dated release from https://github.com/BtbN/FFmpeg-Builds/releases
 FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz"
@@ -43,8 +43,8 @@ sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     rpicam-apps libcamera-apps curl xz-utils ca-certificates
 
-if ! /usr/local/bin/ffmpeg -hide_banner -muxers 2>/dev/null | grep -q '\\bwhip\\b'; then
-  echo "--- downloading static ffmpeg with WHIP support"
+if ! /usr/local/bin/ffmpeg -hide_banner -muxers 2>/dev/null | grep -q '\\brtsp\\b'; then
+  echo "--- downloading static ffmpeg"
   # /tmp is tmpfs (~209MB on Pi Zero 2 W) — unpacked tarball is ~240MB. Use /var/tmp.
   tmp=\$(mktemp -d -p /var/tmp)
   curl -fL --progress-bar -o "\$tmp/ffmpeg.tar.xz" "$FFMPEG_URL"
@@ -54,7 +54,7 @@ if ! /usr/local/bin/ffmpeg -hide_banner -muxers 2>/dev/null | grep -q '\\bwhip\\
   rm -rf "\$tmp"
   echo "--- ffmpeg installed: \$(/usr/local/bin/ffmpeg -version | head -n1)"
 else
-  echo "--- ffmpeg with WHIP already present"
+  echo "--- ffmpeg already present"
 fi
 
 echo "--- installing streamer.sh"
