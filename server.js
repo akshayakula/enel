@@ -857,12 +857,7 @@ app.get("/api/splats", (_req, res) => {
     { include: (rel) => rel.split(path.sep).includes("result") },
   );
   const sceneFiles = listSplatFiles(SCENES_DIR, "/scenes", "Scenes");
-  const files = [...pipelineFiles, ...sceneFiles].sort((a, b) => {
-    const sceneBiasA = a.name === "scene.splat" ? 1 : 0;
-    const sceneBiasB = b.name === "scene.splat" ? 1 : 0;
-    if (sceneBiasA !== sceneBiasB) return sceneBiasB - sceneBiasA;
-    return b.mtimeMs - a.mtimeMs;
-  });
+  const files = [...pipelineFiles, ...sceneFiles].sort((a, b) => b.mtimeMs - a.mtimeMs);
   res.json({ ok: true, files, defaultUrl: files[0]?.url || null });
 });
 

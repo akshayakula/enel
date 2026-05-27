@@ -973,6 +973,7 @@ function start() {
   }
 
   buildMinimap();
+  loadLatestSplat();
 
   tickClock();
   setInterval(tickClock, 1000);
@@ -2006,6 +2007,20 @@ function loadSplatUrl(url, sceneName) {
   const nameEl = document.getElementById("splatSceneName");
   if (frame) frame.src = `/splat/?url=${encodeURIComponent(url)}`;
   if (nameEl && sceneName) nameEl.textContent = sceneName;
+}
+
+async function loadLatestSplat() {
+  try {
+    const response = await fetch("/api/splats", { cache: "no-store" });
+    const body = await response.json();
+    if (!response.ok || !body.ok) throw new Error(body.error || "Unable to list splats");
+    const latest = Array.isArray(body.files) ? body.files[0] : null;
+    const url = latest?.url || body.defaultUrl;
+    if (!url) return;
+    loadSplatUrl(url, latest?.label || latest?.name || "latest splat");
+  } catch (err) {
+    console.warn("Unable to load latest splat", err);
+  }
 }
 
 function formatDuration(seconds) {

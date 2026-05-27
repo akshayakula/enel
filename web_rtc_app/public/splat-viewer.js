@@ -377,7 +377,7 @@ async function boot() {
   const queryUrl = params.get("url");
   const firstScene = queryUrl
     ? libraryItems.find((item) => normalizeUrl(item.url) === normalizeUrl(queryUrl)) || { url: queryUrl, label: queryUrl, name: queryUrl.split("/").pop() }
-    : libraryItems.find((item) => item.name === "scene.splat") || libraryItems[0];
+    : libraryItems[0];
 
   if (firstScene) {
     await loadScene(firstScene);
