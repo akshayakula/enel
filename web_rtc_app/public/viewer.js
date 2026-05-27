@@ -892,10 +892,9 @@ function drawPipes() {
   };
 
   for (const streamId of STREAM_IDS) {
-    if (!readyState.get(streamId)) continue; // only linked nodes get a flow line
-
     const cam = cams.get(streamId);
     if (!cam) continue;
+    const ready = !!readyState.get(streamId);
     const container = cam.container;
     const containerRect = container.getBoundingClientRect();
     const src = {
@@ -908,31 +907,33 @@ function drawPipes() {
     const path = document.createElementNS(SVG_NS, "path");
     path.setAttribute("d", d);
     const role = NODE_ROLES[streamId].toLowerCase();
-    path.setAttribute("class", `pipe pipe-${role} pipe-${streamId}`);
+    path.setAttribute("class", `pipe pipe-${role} pipe-${streamId}${ready ? "" : " pipe-offline"}`);
     pipesSvg.appendChild(path);
 
-    for (let i = 0; i < 3; i++) {
-      const dot = document.createElementNS(SVG_NS, "circle");
-      dot.setAttribute("r", "3");
-      dot.setAttribute("class", `pipe-dot pipe-dot-${role}`);
-      const motion = document.createElementNS(SVG_NS, "animateMotion");
-      motion.setAttribute("dur", "2.4s");
-      motion.setAttribute("repeatCount", "indefinite");
-      motion.setAttribute("begin", `${i * 0.8}s`);
-      motion.setAttribute("path", d);
-      dot.appendChild(motion);
-      pipesSvg.appendChild(dot);
+    if (ready) {
+      for (let i = 0; i < 3; i++) {
+        const dot = document.createElementNS(SVG_NS, "circle");
+        dot.setAttribute("r", "3");
+        dot.setAttribute("class", `pipe-dot pipe-dot-${role}`);
+        const motion = document.createElementNS(SVG_NS, "animateMotion");
+        motion.setAttribute("dur", "2.4s");
+        motion.setAttribute("repeatCount", "indefinite");
+        motion.setAttribute("begin", `${i * 0.8}s`);
+        motion.setAttribute("path", d);
+        dot.appendChild(motion);
+        pipesSvg.appendChild(dot);
+      }
     }
 
-    const t = 0.58;
+    const t = 0.38;
     const u = 1 - t;
     const bx = u*u*u*src.x + 3*u*u*t*src.x + 3*u*t*t*sink.x + t*t*t*sink.x;
     const by = u*u*u*src.y + 3*u*u*t*midY + 3*u*t*t*midY + t*t*t*sink.y;
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = `ctrl-btn mono pipe-sitrep-btn pipe-sitrep-${role}`;
-    btn.textContent = "sitrep";
-    btn.title = `Run sitrep for ${NODE_LABELS[streamId] || streamId}`;
+    btn.className = `ctrl-btn mono pipe-sitrep-btn pipe-sitrep-${role}${ready ? "" : " pipe-sitrep-offline"}`;
+    btn.textContent = "Situation Report";
+    btn.title = `Run situation report for ${NODE_LABELS[streamId] || streamId}`;
     btn.style.left = `${bx}px`;
     btn.style.top = `${by}px`;
     btn.addEventListener("click", () => aiSitrep(btn, streamId));
@@ -1803,8 +1804,8 @@ async function aiSitrep(btn, streamId = null) {
   }
   panel.style.display = "";
   if (label) label.textContent = streamId
-    ? `${NODE_LABELS[streamId] || streamId} sitrep`
-    : "fleet sitrep";
+    ? `${NODE_LABELS[streamId] || streamId} situation report`
+    : "fleet situation report";
   if (frames.length === 0) {
     body.textContent = streamId ? `${NODE_LABELS[streamId] || streamId} has no live frame to fuse.` : "no live cams — nothing to fuse.";
     return;
@@ -1813,7 +1814,7 @@ async function aiSitrep(btn, streamId = null) {
     ? `fusing ${NODE_LABELS[streamId] || streamId} path…`
     : `fusing ${frames.length} feed${frames.length > 1 ? "s" : ""}…`;
   const prev = btn && btn.textContent;
-  if (btn) { btn.disabled = true; btn.textContent = "…"; }
+  if (btn) { btn.disabled = true; btn.textContent = "Scanning"; }
   try {
     const res = await fetch("/api/ai/sitrep", {
       method: "POST",
