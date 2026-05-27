@@ -353,6 +353,25 @@ body.booted  > main.flow-page {
 .cam-node[data-state="offline"] {
   opacity: 0.75;
 }
+.cam-node.data-fresh,
+.cam-node.stream-fresh,
+.cam-node.telemetry-fresh,
+.cam-node.battery-fresh {
+  animation: nodeFreshGlow 900ms ease-out both;
+}
+.cam-node.telemetry-fresh {
+  animation-name: nodeTelemetryGlow;
+}
+@keyframes nodeFreshGlow {
+  0%   { border-color: rgba(182, 210, 109, 0.85); box-shadow: 0 0 0 rgba(182, 210, 109, 0); }
+  35%  { box-shadow: 0 0 26px rgba(182, 210, 109, 0.12); }
+  100% { border-color: var(--line-2); box-shadow: var(--shadow); }
+}
+@keyframes nodeTelemetryGlow {
+  0%   { border-color: rgba(111, 208, 197, 0.9); box-shadow: 0 0 0 rgba(111, 208, 197, 0); }
+  35%  { box-shadow: 0 0 28px rgba(111, 208, 197, 0.14); }
+  100% { border-color: var(--line-2); box-shadow: var(--shadow); }
+}
 
 /* corner brackets removed for minimal UI */
 .cam-corner { display: none; }
@@ -403,6 +422,20 @@ body.booted  > main.flow-page {
   font-variant-numeric: tabular-nums;
 }
 .cam-status.live    { color: var(--accent); }
+.cam-status.live::after {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: statusBlink 1.5s ease-in-out infinite;
+}
+@keyframes statusBlink {
+  0%, 100% { opacity: 0.35; transform: scale(0.75); }
+  50%      { opacity: 1; transform: scale(1); }
+}
 .cam-status.offline { color: var(--muted); }
 .cam-status.error   { color: var(--red); }
 
@@ -471,7 +504,7 @@ body.demo-mode .cam-nosig { display: none !important; }
 
 .cam-controls {
   display: grid;
-  grid-template-columns: minmax(54px, 1fr) 28px repeat(3, minmax(42px, 1fr));
+  grid-template-columns: minmax(54px, 1fr) repeat(3, minmax(42px, 1fr));
   gap: 6px;
   align-items: center;
   padding: 8px 10px;
@@ -1492,8 +1525,10 @@ body.demo-mode .cam-nosig { display: none !important; }
 .mm-header {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   margin-bottom: 10px;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 .mm-title {
   font-size: 0.82rem;
@@ -1501,8 +1536,23 @@ body.demo-mode .cam-nosig { display: none !important; }
   letter-spacing: 0.04em;
 }
 .mm-hint {
+  margin: -4px 0 10px;
   font-size: 0.72rem;
   color: var(--dim);
+}
+.mm-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.mm-action-btn {
+  flex: 0 0 auto;
+  min-height: 26px;
+  padding: 3px 8px;
+  font-size: 0.68rem;
+  color: var(--muted);
 }
 .mini-map-section { position: relative; }
 .mini-map {
@@ -1599,6 +1649,31 @@ body.demo-mode .cam-nosig { display: none !important; }
   font-size: 10px;
   letter-spacing: 0.04em;
   pointer-events: none;
+}
+.mm-cmd {
+  fill: var(--accent);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms ease, fill 160ms ease;
+}
+.mm-unit.cmd-pending .mm-cmd,
+.mm-unit.cmd-ok .mm-cmd,
+.mm-unit.cmd-err .mm-cmd {
+  opacity: 1;
+}
+.mm-unit.cmd-pending .mm-cmd { fill: var(--cyan); }
+.mm-unit.cmd-ok .mm-cmd { fill: var(--accent); }
+.mm-unit.cmd-err .mm-cmd { fill: var(--red); }
+.mm-unit.command-pulse .mm-halo {
+  animation: mmCommandPulse 850ms ease-out both;
+}
+@keyframes mmCommandPulse {
+  0%   { opacity: 0.55; transform: scale(0.75); }
+  100% { opacity: 0; transform: scale(1.85); }
 }
 .mm-unit.on-target .mm-dist { fill: #6fd36a; }
 .mm-unit.on-target .mm-body { stroke: #6fd36a; }
@@ -2225,6 +2300,14 @@ body.phone-publisher {
   color: var(--accent);
   border-color: rgba(182, 210, 109, 0.55);
   background: rgba(182, 210, 109, 0.06);
+}
+.phone-pointing.updated {
+  animation: phoneTargetUpdate 900ms ease-out both;
+}
+@keyframes phoneTargetUpdate {
+  0%   { box-shadow: 0 0 0 rgba(111, 208, 197, 0); border-color: rgba(111, 208, 197, 0.95); }
+  35%  { box-shadow: 0 0 22px rgba(111, 208, 197, 0.18); }
+  100% { box-shadow: none; }
 }
 .phone-camera-status {
   flex: 0 0 auto;

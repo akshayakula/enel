@@ -31,6 +31,10 @@
         b.textContent = `${d.charging ? "CHG" : "BAT"} ${pct}%`;
         b.title = `${(d.voltage || 0).toFixed(2)}V · ${d.charging ? "charging" : "discharging"}`;
         b.style.display = "";
+        node.classList.remove("battery-fresh");
+        void node.offsetWidth;
+        node.classList.add("battery-fresh");
+        setTimeout(() => node.classList.remove("battery-fresh"), 950);
       } else {
         b.style.display = "none"; // absent or stale → hide
       }

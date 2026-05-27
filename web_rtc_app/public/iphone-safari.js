@@ -16,7 +16,7 @@ const phonePointing = document.getElementById("phonePointing");
 
 const params = new URLSearchParams(window.location.search);
 const requestedStreamId = (params.get("streamId") || "").trim();
-const targetBearingDeg = normalizeDeg(Number(params.get("bearing_deg") || params.get("bearing") || 0));
+let targetBearingDeg = normalizeDeg(Number(params.get("bearing_deg") || params.get("bearing") || 0));
 
 let localStream = null;
 let publisher = null;
@@ -25,6 +25,8 @@ let lastHeadingDeg = null;
 let headingSpoofed = false;
 let lastLocation = null;
 let poseTimer = null;
+let commandPollTimer = null;
+const lastCommandTsByStream = {};
 
 function normalizeDeg(value) {
   return ((Number(value) % 360) + 360) % 360;
@@ -84,6 +86,13 @@ function updateCompass() {
     phonePointing.textContent = `turn ${dir} ${Math.round(Math.abs(delta))}°`;
     phonePointing.classList.remove("aligned");
   }
+}
+
+function setTargetBearing(value, source = "target") {
+  if (!Number.isFinite(Number(value))) return;
+  targetBearingDeg = normalizeDeg(Number(value));
+  if (phoneTarget) phoneTarget.title = `${source} · ${formatDeg(targetBearingDeg)}`;
+  updateCompass();
 }
 
 function onOrientation(event) {
@@ -170,6 +179,49 @@ function startPoseUploads() {
   }, 1000);
 }
 
+function startCommandPolling() {
+  if (commandPollTimer) return;
+  const poll = async () => {
+    if (!currentStreamId) return;
+    try {
+      const res = await fetch(`/api/command/${currentStreamId}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`command ${res.status}`);
+      const payload = await res.json();
+      const ts = Number(payload.ts || 0);
+      if (!payload.cmd || ts <= (lastCommandTsByStream[currentStreamId] || 0)) return;
+      lastCommandTsByStream[currentStreamId] = ts;
+      if (payload.cmd === "compass") {
+        setTargetBearing(payload.args?.bearing_deg, "tactical map");
+        phonePointing?.classList.add("updated");
+        setTimeout(() => phonePointing?.classList.remove("updated"), 900);
+      } else if (payload.cmd === "clear") {
+        handleClearTarget();
+      }
+    } catch {
+      // Keep the phone publisher resilient; streaming should not depend on command polling.
+    }
+  };
+  poll();
+  commandPollTimer = setInterval(poll, 1000);
+}
+
+async function primeCommandCursor(streamId) {
+  try {
+    const res = await fetch(`/api/command/${streamId}`, { cache: "no-store" });
+    if (!res.ok) throw new Error(`command ${res.status}`);
+    const payload = await res.json();
+    lastCommandTsByStream[streamId] = Number(payload.ts || 0);
+  } catch {
+    lastCommandTsByStream[streamId] = Date.now();
+  }
+}
+
+function handleClearTarget() {
+  if (Number.isFinite(lastHeadingDeg)) setTargetBearing(lastHeadingDeg, "cleared");
+  phonePointing.textContent = "camera target cleared";
+  phonePointing.classList.remove("aligned");
+}
+
 async function ensureCamera() {
   if (localStream) {
     return localStream;
@@ -223,6 +275,7 @@ async function publishToStream(streamId) {
   setActiveStream(streamId);
   setPublishStatus(`Preparing ${label}`);
   stopButton.disabled = false;
+  await primeCommandCursor(streamId);
 
   try {
     const stream = await ensureCamera();
@@ -325,6 +378,7 @@ renderButtons();
 updateCompass();
 requestLocation();
 startPoseUploads();
+startCommandPolling();
 enableCompass();
 
 if (PHONE_STREAM_IDS.includes(requestedStreamId)) {

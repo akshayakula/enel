@@ -14,6 +14,18 @@ const opsClock = document.getElementById("opsClock");
 const cams = new Map();
 const readers = new Map();
 const readyState = new Map();
+const phonePose = new Map();
+
+function flashData(streamId, cls = "data-fresh") {
+  const cam = cams.get(streamId);
+  const node = cam && cam.container;
+  if (!node) return;
+  node.classList.remove(cls);
+  // Restart the animation even when updates arrive quickly.
+  void node.offsetWidth;
+  node.classList.add(cls);
+  setTimeout(() => node.classList.remove(cls), 950);
+}
 
 function mediaMtxBaseUrl() {
   const override = (new URLSearchParams(location.search).get("mediamtx") || "").trim();
@@ -562,6 +574,7 @@ function wireDroneSocket(streamId, d) {
       d.battFill.classList.toggle("warn", pct != null && pct < 30);
       d.battFill.classList.toggle("crit", pct != null && pct < 15);
     }
+    flashData(streamId, "telemetry-fresh");
     // RC channels — we only command CH4 from this UI; others show released.
     const ourYaw = Number(d.stickPwm.textContent) || 1500;
     const chVals = [0, 0, 0, ourYaw, 0, 0, 0, 0];
@@ -738,16 +751,19 @@ async function sendCommand(streamId, cmd, args, btn) {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ cmd, args: args || {} }),
     });
+    if (!res.ok) throw new Error(`command ${res.status}`);
     if (btn && btn.tagName === "BUTTON") {
-      btn.textContent = res.ok ? "sent" : "ERR";
+      btn.textContent = "sent";
       setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 900);
     }
+    return true;
   } catch (err) {
     if (btn && btn.tagName === "BUTTON") {
       btn.textContent = "ERR";
       setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
     }
     console.error(`command ${streamId}/${cmd} failed`, err);
+    throw err;
   }
 }
 
@@ -772,7 +788,9 @@ function attachReader(streamId, baseUrl, ui, container) {
       ui.status.textContent = "live";
       ui.status.className = "cam-status mono live";
       container.dataset.state = "live";
+      container.dataset.lastSeen = "now";
       ui.noSig.style.display = "none";
+      flashData(streamId, "stream-fresh");
     },
     onError: (err) => {
       ui.video.srcObject = null;
@@ -809,6 +827,9 @@ function updateFeedStats(streamId, slot) {
   }
 
   readyState.set(streamId, true);
+  const wasLive = cam.container.dataset.state === "live";
+  cam.container.dataset.state = "live";
+  cam.container.dataset.lastSeen = "now";
   const now = Date.now();
   const prevBytes = lastBytes.get(streamId);
   const prevTs = lastPollTs.get(streamId);
@@ -817,7 +838,9 @@ function updateFeedStats(streamId, slot) {
     const dSec = Math.max(0.001, (now - prevTs) / 1000);
     const kbps = Math.round((dBytes * 8) / 1000 / dSec);
     cam.bitrateEl.textContent = `${kbps} kbps`;
+    if (kbps > 0) flashData(streamId, "data-fresh");
   }
+  if (!wasLive) flashData(streamId, "stream-fresh");
   lastBytes.set(streamId, slot.bytesReceived ?? 0);
   lastPollTs.set(streamId, now);
 }
@@ -1129,6 +1152,13 @@ function buildMinimap() {
     dist.textContent = "";
     g.appendChild(dist);
 
+    const cmd = document.createElementNS(SVG_NS, "text");
+    cmd.setAttribute("class", "mm-cmd");
+    cmd.setAttribute("text-anchor", "middle");
+    cmd.setAttribute("dy", "62");
+    cmd.textContent = "";
+    g.appendChild(cmd);
+
     units.appendChild(g);
     mmAttachHandlers(svg, g, id, body, tip);
   }
@@ -1154,6 +1184,8 @@ function buildMinimap() {
 
   mmAttachPOIHandlers(svg, poiGroup);
   mmAttachViewportHandlers(svg);
+  mmWireChrome();
+  startPhonePosePolling();
 
   // Compass rose — fixed in screen space (NOT inside .mm-world), top-right.
   const compass = document.createElementNS(SVG_NS, "g");
@@ -1231,6 +1263,45 @@ function buildMinimap() {
 
   const ro = new ResizeObserver(() => { mmRenderAll(); mmRenderPOI(); });
   ro.observe(svg);
+}
+
+function mmWireChrome() {
+  const north = document.getElementById("mmNorthAll");
+  const clear = document.getElementById("mmClearPoi");
+  const reset = document.getElementById("mmResetView");
+  if (north && !north.dataset.bound) {
+    north.dataset.bound = "1";
+    north.addEventListener("click", () => {
+      for (const id of STREAM_IDS) {
+        mmState[id].bearing = 0;
+        mmRenderUnit(id);
+        mmSendBearing(id);
+      }
+      mmSave();
+    });
+  }
+  if (clear && !clear.dataset.bound) {
+    clear.dataset.bound = "1";
+    clear.addEventListener("click", () => {
+      mmPOI = null;
+      mmSavePOI();
+      mmRenderPOI();
+      mmRenderAll();
+      for (const id of STREAM_IDS.filter((streamId) => streamId !== DRONE_STREAM_ID)) {
+        piPost(id, "ring/clear", {}, null)
+          .then(() => mmSetCommandStatus(id, "cleared", "ok"))
+          .catch(() => mmSetCommandStatus(id, "clear failed", "err"));
+      }
+    });
+  }
+  if (reset && !reset.dataset.bound) {
+    reset.dataset.bound = "1";
+    reset.addEventListener("click", () => {
+      mmView.tx = 0; mmView.ty = 0; mmView.scale = 1;
+      applyView();
+      mmSaveView();
+    });
+  }
 }
 
 function mmAttachViewportHandlers(svg) {
@@ -1357,6 +1428,32 @@ function mmFocusAllOnPOI() {
   mmSave();
 }
 
+function mmSetCommandStatus(id, text, state = "pending") {
+  const svg = document.getElementById("miniMap");
+  const g = svg && svg.querySelector(`.mm-unit[data-cam="${id}"]`);
+  if (!g) return;
+  const cmd = g.querySelector(".mm-cmd");
+  if (!cmd) return;
+  g.classList.remove("cmd-pending", "cmd-ok", "cmd-err");
+  g.classList.add(`cmd-${state}`);
+  cmd.textContent = text;
+  clearTimeout(g._cmdTimer);
+  g._cmdTimer = setTimeout(() => {
+    g.classList.remove("cmd-pending", "cmd-ok", "cmd-err");
+    cmd.textContent = "";
+  }, state === "pending" ? 1400 : 2200);
+}
+
+function mmPulseCommand(id) {
+  const svg = document.getElementById("miniMap");
+  const g = svg && svg.querySelector(`.mm-unit[data-cam="${id}"]`);
+  if (!g) return;
+  g.classList.remove("command-pulse");
+  void g.getBBox();
+  g.classList.add("command-pulse");
+  setTimeout(() => g.classList.remove("command-pulse"), 900);
+}
+
 function mmAttachPOIHandlers(svg, g) {
   let dragging = false;
   let pointerId = null;
@@ -1393,7 +1490,9 @@ function mmAttachPOIHandlers(svg, g) {
     mmSavePOI();
     mmRenderPOI();
     mmRenderAll();
-    for (const id of STREAM_IDS) piPost(id, "ring/clear", {}, null);
+    for (const id of STREAM_IDS.filter((streamId) => streamId !== DRONE_STREAM_ID)) {
+      piPost(id, "ring/clear", {}, null);
+    }
   });
 }
 
@@ -1425,11 +1524,16 @@ function mmRenderUnit(id) {
   const dist = g.querySelector(".mm-dist");
   if (dist) {
     const info = mmRangeInfo(id);
+    const pose = phonePose.get(id);
     if (info.hasPoi) {
       dist.textContent = info.onTarget
         ? `on target · ${info.count}/16`
         : `${info.distM.toFixed(1)}m · ${info.count}/16`;
       g.classList.toggle("on-target", info.onTarget);
+    } else if (pose && pose.stale !== true && Number.isFinite(pose.heading_deg)) {
+      const delta = Number.isFinite(pose.delta_deg) ? ` · Δ${Math.round(pose.delta_deg)}°` : "";
+      dist.textContent = `phone ${Math.round(normDeg(pose.heading_deg))}°${delta}`;
+      g.classList.remove("on-target");
     } else {
       dist.textContent = "";
       g.classList.remove("on-target");
@@ -1437,6 +1541,27 @@ function mmRenderUnit(id) {
   }
 
   if (typeof renderBeOverlay === "function") renderBeOverlay();
+}
+
+let phonePosePollStarted = false;
+function startPhonePosePolling() {
+  if (phonePosePollStarted) return;
+  phonePosePollStarted = true;
+  const poll = async () => {
+    for (const id of ["cam3", "cam4"]) {
+      try {
+        const res = await fetch(`/api/phone-pose/${id}`, { cache: "no-store" });
+        if (!res.ok) throw new Error(`phone pose ${res.status}`);
+        const body = await res.json();
+        phonePose.set(id, body);
+        mmRenderUnit(id);
+      } catch {
+        phonePose.set(id, { stale: true });
+      }
+    }
+  };
+  poll();
+  setInterval(poll, 2000);
 }
 
 function svgPointFromEvent(svg, evt) {
@@ -1485,18 +1610,27 @@ function shortestDeg(target, current) {
 }
 function mmSendAirBearing(id) {
   const d = cams.get(id);
-  if (!d || typeof d.yawPulse !== "function") return;
+  if (!d || typeof d.yawPulse !== "function") {
+    mmSetCommandStatus(id, "yaw offline", "err");
+    return false;
+  }
   const target = Math.round(mmState[id].bearing);
   const current = Number.isFinite(d.latestYawDeg) ? d.latestYawDeg : 0;
   const delta = shortestDeg(target, current);
+  mmSetCommandStatus(id, `yaw ${target}°`, "pending");
   if (Math.abs(delta) < 7) {
-    d.yawPulse(1500, 120);
-    return;
+    const ok = d.yawPulse(1500, 120);
+    mmSetCommandStatus(id, ok ? "yaw aligned" : "stick busy", ok ? "ok" : "err");
+    if (ok) mmPulseCommand(id);
+    return ok;
   }
   const mag = Math.min(330, Math.max(120, Math.round(Math.abs(delta) * 2.2)));
   const pwm = delta > 0 ? 1500 + mag : 1500 - mag;
   const duration = Math.min(1400, Math.max(220, Math.round(Math.abs(delta) * 7)));
-  d.yawPulse(pwm, duration);
+  const ok = d.yawPulse(pwm, duration);
+  mmSetCommandStatus(id, ok ? `yaw ${delta > 0 ? "right" : "left"}` : "stick busy", ok ? "ok" : "err");
+  if (ok) mmPulseCommand(id);
+  return ok;
 }
 function mmSendBearing(id) {
   const now = Date.now();
@@ -1518,7 +1652,13 @@ function mmSendBearing(id) {
     } else {
       payload.count = 3;
     }
-    piPost(id, "ring/compass", payload, null);
+    mmSetCommandStatus(id, "sending compass", "pending");
+    piPost(id, "ring/compass", payload, null)
+      .then(() => {
+        mmSetCommandStatus(id, id === "cam3" || id === "cam4" ? "phone target sent" : "ring updated", "ok");
+        mmPulseCommand(id);
+      })
+      .catch(() => mmSetCommandStatus(id, "send failed", "err"));
   };
   if (now - s.lastTs >= gap) {
     if (s.trailing) { clearTimeout(s.trailing); s.trailing = null; }

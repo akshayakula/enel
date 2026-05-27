@@ -100,8 +100,13 @@
       <section class="mini-map-section">
         <div class="mm-header">
           <div class="mm-title mono">tactical map</div>
-          <div class="mm-hint mono">drag empty · pan · wheel zoom · tap empty to drop poi · double-click to reset</div>
+          <div class="mm-actions mono">
+            <button class="ctrl-btn mono mm-action-btn" id="mmNorthAll" title="Point every unit north">north all</button>
+            <button class="ctrl-btn mono mm-action-btn" id="mmClearPoi" title="Clear map target and compass overrides">clear target</button>
+            <button class="ctrl-btn mono mm-action-btn" id="mmResetView" title="Reset tactical map view">reset view</button>
+          </div>
         </div>
+        <div class="mm-hint mono">drag unit to move · drag dot to aim · tap empty to set target · wheel/pinch to zoom</div>
         <svg class="mini-map" id="miniMap" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet"></svg>
         <div class="mm-hud mono" id="mmHud">×1.00</div>
       </section>
