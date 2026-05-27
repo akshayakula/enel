@@ -36,11 +36,11 @@ When done, the SD will re-mount as `bootfs` under `/Volumes/bootfs`.
 From the repo root:
 
 ```bash
-./raspi_zero_2_w_code/provision-sd.sh cam2 137.66.49.231 pi-cam-1
+./raspi_zero_2_w_code/provision-sd.sh cam1 137.66.49.231 pi-cam-1
 ```
 
 Arguments: `<stream-id> <server-host> [pi-name]`. Use `137.66.49.231` for the
-deployed Fly app; the ground camera unit is `cam2`.
+deployed Fly app; the ground camera unit is `cam1`.
 
 Eject the SD from the Mac, insert into the Pi, power on.
 
@@ -62,7 +62,7 @@ Tail logs:
 ssh pi-sensor1@pi-cam-1.local 'journalctl -u streamer -f'
 ```
 
-Open the dashboard and the `cam2` / `gnd-1` tile should go live:
+Open the dashboard and the `cam1` / `gnd-1` tile should go live:
 
 ```text
 https://enel-stream.fly.dev/viewer

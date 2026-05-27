@@ -89,10 +89,10 @@ app.get("/health", (_req, res) => {
 const batteryStore = new Map(); // cam -> { voltage, pct, charging, ts }
 const BATTERY_STALE_MS = 30000;
 const BATTERY_ALIASES = {
-  gnd1: "cam2",
-  "gnd-1": "cam2",
-  air1: "cam1",
-  "air-1": "cam1",
+  gnd1: "cam1",
+  "gnd-1": "cam1",
+  air2: "cam2",
+  "air-2": "cam2",
 };
 const normalizeBatteryCam = (cam) => BATTERY_ALIASES[String(cam || "").toLowerCase()] || cam;
 
@@ -132,7 +132,7 @@ app.post("/api/control/:cam", (req, res) => {
 });
 
 const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
-const STREAM_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
+const STREAM_LABELS = { cam1: "gnd-1", cam2: "air-2", cam3: "gnd-3", cam4: "gnd-4" };
 const PHONE_STREAM_SLOTS = ["cam3", "cam4"];
 const phonePoseStore = new Map(); // cam -> { lat, lon, accuracy, heading_deg, target_bearing_deg, delta_deg, ts }
 
@@ -311,18 +311,18 @@ app.post("/api/ai/swarm", async (req, res) => {
     const sys = [
       "You are the commander of a 4-unit sensor swarm.",
       "Unit roster:",
-      "  cam1 = airborne drone. You may command YAW ONLY.",
+      "  cam2 = AIR-2 airborne drone. You may command YAW ONLY.",
       "          yaw PWM range: 1000..2000 where 1500=hold, 1000=hard left, 2000=hard right.",
       "          Typical short turn: 1700 (gentle right) or 1300 (gentle left) for 600-1500 ms.",
       "          You MAY NOT command throttle, roll, pitch, arm, disarm, or altitude.",
-      "  cam2, cam3, cam4 = ground units with 16-LED compass rings.",
+      "  cam1, cam3, cam4 = ground units with 16-LED compass rings.",
       "          bearing_deg: 0..359 (0=north). count: 1..15 LEDs lit centered on bearing (more = stronger \"go this way\").",
       "          on_target: true lights the whole ring green (unit is on the objective).",
       "Return STRICT JSON with the exact schema:",
       "  {",
       '    "rationale": "<one short sentence of intent>",',
       '    "drone": { "yaw_pwm": <int 1000..2000>, "duration_ms": <int 0..3000> } | null,',
-      '    "ground": [ { "cam": "cam2"|"cam3"|"cam4", "bearing_deg": <int 0..359>, "count": <int 1..15>, "on_target": <bool> }, ... ]',
+      '    "ground": [ { "cam": "cam1"|"cam3"|"cam4", "bearing_deg": <int 0..359>, "count": <int 1..15>, "on_target": <bool> }, ... ]',
       "  }",
       "Rules: omit drone (null) if no yaw needed. Omit ground ([]) if none. Never invent cams. Never exceed ranges. No prose outside JSON.",
     ].join("\n");
@@ -354,7 +354,7 @@ app.post("/api/ai/swarm", async (req, res) => {
     }
     if (Array.isArray(plan.ground)) {
       for (const g of plan.ground.slice(0, 3)) {
-        if (!g || !["cam2", "cam3", "cam4"].includes(g.cam)) continue;
+        if (!g || !["cam1", "cam3", "cam4"].includes(g.cam)) continue;
         const bearing = Math.round(Number(g.bearing_deg));
         const count   = Math.round(Number(g.count));
         if (!Number.isFinite(bearing) || !Number.isFinite(count)) continue;
@@ -412,7 +412,7 @@ app.get("/api/next-slot", async (req, res) => {
     const free = candidates.find((id) => !busy.has(id));
     if (!free) {
       res.status(503).json({
-        error: role === "all" ? "all slots busy" : "phone slots gnd-2/gnd-3 busy",
+        error: role === "all" ? "all slots busy" : "phone slots gnd-3/gnd-4 busy",
         candidates,
         busy: [...busy],
       });

@@ -1,5 +1,5 @@
 const PHONE_STREAM_IDS = ["cam3", "cam4"];
-const STREAM_LABELS = { cam3: "gnd-2", cam4: "gnd-3" };
+const STREAM_LABELS = { cam3: "gnd-3", cam4: "gnd-4" };
 const streamButtons = document.getElementById("streamButtons");
 const activeStream = document.getElementById("activeStream");
 const publishStatus = document.getElementById("publishStatus");

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""enel mavlink-bridge: single-cam (cam1) drone link.
+"""enel mavlink-bridge: AIR-2 (cam2) drone link.
 
 Holds one UART connection to the flight controller, exposes a LAN WebSocket on
 port 8090, and dials the Fly dashboard over HTTP polling for cloud telemetry.
@@ -47,7 +47,7 @@ WS_PORT       = int(os.environ.get("MAV_WS_PORT", "8090"))
 # the default because Fly's HTTP proxy mangles WebSocket RSV bits for this path.
 # Set MAV_UPLINK_URL="" to disable. ws:// URLs are still supported for LAN tests.
 UPLINK_URL    = os.environ.get("MAV_UPLINK_URL",
-                               "https://enel-stream.fly.dev/api/pi/cam1/mavlink/uplink")
+                               "https://enel-stream.fly.dev/api/pi/cam2/mavlink/uplink")
 
 RC_SEND_HZ    = 20        # RC_CHANNELS_OVERRIDE send rate
 TELE_HZ       = 5         # telemetry push rate to all WS clients

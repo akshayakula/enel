@@ -1,7 +1,7 @@
 const STREAM_IDS = ["cam1", "cam2", "cam3", "cam4"];
-const DRONE_STREAM_ID = "cam1";
-const NODE_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
-const NODE_ROLES  = { cam1: "airborne", cam2: "ground", cam3: "ground", cam4: "ground" };
+const DRONE_STREAM_ID = "cam2";
+const NODE_LABELS = { cam1: "gnd-1", cam2: "air-2", cam3: "gnd-3", cam4: "gnd-4" };
+const NODE_ROLES  = { cam1: "ground", cam2: "airborne", cam3: "ground", cam4: "ground" };
 const STATE_POLL_MS = 3000;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -132,6 +132,7 @@ function buildCamCard(container, streamId) {
   const scanline = el("div", "cam-scanline");
   videoWrap.appendChild(scanline);
   const noSig = el("div", "cam-nosig mono", "no signal");
+  if (streamId === DRONE_STREAM_ID) noSig.textContent = "streaming to FPV pilot";
   videoWrap.appendChild(noSig);
 
   const stats = el("div", "cam-stats mono");
@@ -146,12 +147,6 @@ function buildCamCard(container, streamId) {
   const controls = el("div", "cam-controls");
   const btnIdentify = el("button", "ctrl-btn", "ident");
   btnIdentify.title = "Pulse the ring cyan for 5s";
-
-  const colorInput = document.createElement("input");
-  colorInput.type = "color";
-  colorInput.className = "ctrl-color";
-  colorInput.value = "#80ed99";
-  colorInput.title = "Override ring color";
 
   const btnClear = el("button", "ctrl-btn ctrl-btn--ghost", "clr");
   btnClear.title = "Clear override";
@@ -170,10 +165,6 @@ function buildCamCard(container, streamId) {
   btnOff.appendChild(offLabel);
 
   btnIdentify.addEventListener("click", () => sendCommand(streamId, "identify", { ttl: 5 }, btnIdentify));
-  colorInput.addEventListener("change", () => {
-    const { r, g, b } = hexToRgb(colorInput.value);
-    piPost(streamId, "ring/color", { r, g, b, ttl: 60 }, colorInput);
-  });
   btnClear.addEventListener("click", () => piPost(streamId, "ring/clear", {}, btnClear));
   btnAI.addEventListener("click", () => aiDescribeCam(streamId, btnAI));
   attachHoldToConfirm(btnOff, offFill, offLabel, 1200, () => {
@@ -181,7 +172,6 @@ function buildCamCard(container, streamId) {
   });
 
   controls.appendChild(btnIdentify);
-  controls.appendChild(colorInput);
   controls.appendChild(btnAI);
   controls.appendChild(btnClear);
   controls.appendChild(btnOff);
@@ -192,10 +182,11 @@ function buildCamCard(container, streamId) {
   container.appendChild(header);
   container.appendChild(videoWrap);
   container.appendChild(stats);
-  container.appendChild(controls);
+  if (streamId !== DRONE_STREAM_ID) {
+    container.appendChild(controls);
+  }
 
-  // Drone panel is keyed to cam1 because the air-unit MAVLink bridge publishes
-  // telemetry under that slot even when the camera label is a ground unit.
+  // Drone panel is keyed to AIR-2 / cam2.
   let drone = null;
   if (streamId === DRONE_STREAM_ID) {
     drone = buildDronePanel(streamId);
@@ -207,7 +198,7 @@ function buildCamCard(container, streamId) {
 }
 
 // -----------------------------------------------------------------------------
-// Drone panel (cam1 / airborne only). Rendered under the cam controls.
+// Drone panel (AIR-2 / airborne only).
 // -----------------------------------------------------------------------------
 function buildDronePanel(streamId) {
   const root = el("div", "drone-panel mono");
@@ -537,8 +528,8 @@ function wireDroneSocket(streamId, d) {
       const sats = t.gps.sats != null ? `/${t.gps.sats}sv` : "";
       d.cellGps.textContent = fix + sats;
       d.cellAlt.textContent = t.gps.alt_m != null ? t.gps.alt_m.toFixed(1) + "m" : "—";
-      // Plot cam1 on the minimap in real-world coords.
-      if (t.gps.lat != null && t.gps.lon != null) geoOnCam1Gps(t.gps);
+      // Plot the drone on the minimap in real-world coords.
+      if (t.gps.lat != null && t.gps.lon != null) geoOnDroneGps(t.gps);
     } else {
       d.cellGps.textContent = "—";
       d.cellAlt.textContent = "—";
@@ -1769,7 +1760,7 @@ function collectSwarmContext() {
       bearing_deg: mmState && mmState[id] ? Math.round(mmState[id].bearing) : null,
     });
   }
-  const d = cams.get("cam1") && cams.get("cam1").drone;
+  const d = cams.get(DRONE_STREAM_ID) && cams.get(DRONE_STREAM_ID).drone;
   if (d) {
     ctx.drone = {
       armed: d.armPill.classList.contains("live"),
@@ -1808,8 +1799,8 @@ function executeSwarmPlan(plan, actionsEl) {
     const dir = plan.drone.yaw_pwm > 1500 ? "right"
               : plan.drone.yaw_pwm < 1500 ? "left" : "hold";
     const mag = Math.abs(plan.drone.yaw_pwm - 1500);
-    const li = addAction(`cam1 → yaw ${dir} (±${mag} pwm · ${plan.drone.duration_ms}ms)`, "pending");
-    const d = cams.get("cam1") && cams.get("cam1").drone;
+    const li = addAction(`${DRONE_STREAM_ID} → yaw ${dir} (±${mag} pwm · ${plan.drone.duration_ms}ms)`, "pending");
+    const d = cams.get(DRONE_STREAM_ID) && cams.get(DRONE_STREAM_ID).drone;
     if (!d || typeof d.yawPulse !== "function") {
       li.classList.remove("pending"); li.classList.add("err");
       li.textContent += " · no drone link";
@@ -1870,7 +1861,7 @@ async function startFusionScan(btn, statusEl) {
   btn.disabled = true;
 
   // Server-side capture reads the MediaMTX paths directly; phone WHIP
-  // publishers are constrained to gnd-2/gnd-3 while air-1 stays reserved.
+  // publishers are constrained to gnd-3/gnd-4 while AIR-2 stays reserved.
   btn.textContent = "recording…";
   setFusionStatus(statusEl, `recording ${LAMBDA_SCAN_SECONDS}s from MediaMTX · ${ready.length} cams`, "working");
   const startRes = await fetch("/api/sessions/lambda/record-start", {
@@ -2129,7 +2120,7 @@ wireSplatChrome();
 // ---------------------------------------------------------------------------
 // Browser geolocation — the operator (you) is the anchor. Once we have a fix,
 // the minimap switches from "drag to position" to "relative to you, north up".
-// cam1 (drone) autoplaces on the map when its GPS telemetry arrives.
+// AIR-2 (drone) autoplaces on the map when its GPS telemetry arrives.
 // ---------------------------------------------------------------------------
 const GEO_ORIGIN_KEY = "enel.geo.origin.v1";
 const METERS_PER_MAP_PX = 0.2;  // 5 px = 1 m → map spans 200m × 112m
@@ -2137,7 +2128,7 @@ const geo = {
   user: null,      // { lat, lon, acc, ts } — latest browser fix
   origin: null,    // { lat, lon } — map center anchor; first fix or stored
   watchId: null,
-  cam1Gps: null,   // last GPS telemetry from drone
+  droneGps: null,  // last GPS telemetry from drone
 };
 
 function wireGeo() {
@@ -2224,7 +2215,7 @@ function latLonToMap(lat, lon) {
   };
 }
 
-// Called when either the user's GPS or cam1's GPS changes. Renders the two
+// Called when either the user's GPS or drone GPS changes. Renders the two
 // special markers (you, drone-gps) on top of the minimap's world group.
 function geoRenderMarkers() {
   const svg = document.getElementById("miniMap");
@@ -2262,8 +2253,8 @@ function geoRenderMarkers() {
       g.appendChild(label);
     }
   }
-  if (geo.cam1Gps) {
-    const p = latLonToMap(geo.cam1Gps.lat, geo.cam1Gps.lon);
+  if (geo.droneGps) {
+    const p = latLonToMap(geo.droneGps.lat, geo.droneGps.lon);
     if (p) {
       const dot = document.createElementNS(SVG_NS, "circle");
       dot.setAttribute("class", "mm-geo-drone");
@@ -2274,22 +2265,22 @@ function geoRenderMarkers() {
       label.setAttribute("class", "mm-geo-label drone");
       label.setAttribute("x", p.x); label.setAttribute("y", p.y - 13);
       label.setAttribute("text-anchor", "middle");
-      label.textContent = `air-1 · ${geo.cam1Gps.alt_m != null ? geo.cam1Gps.alt_m.toFixed(0)+"m" : ""}`;
+      label.textContent = `air-2 · ${geo.droneGps.alt_m != null ? geo.droneGps.alt_m.toFixed(0)+"m" : ""}`;
       g.appendChild(label);
-      // Update the stored cam1 position so the minimap unit arrow agrees.
-      if (mmState && mmState.cam1) {
-        mmState.cam1.x = clamp01(p.x / MAP_VB_W);
-        mmState.cam1.y = clamp01(p.y / MAP_VB_H);
-        mmRenderUnit && mmRenderUnit("cam1");
+      // Update the stored drone position so the minimap unit arrow agrees.
+      if (mmState && mmState[DRONE_STREAM_ID]) {
+        mmState[DRONE_STREAM_ID].x = clamp01(p.x / MAP_VB_W);
+        mmState[DRONE_STREAM_ID].y = clamp01(p.y / MAP_VB_H);
+        mmRenderUnit && mmRenderUnit(DRONE_STREAM_ID);
       }
     }
   }
 }
 
-// Called by the drone WS pipeline when cam1 telemetry lands.
-function geoOnCam1Gps(gps) {
+// Called by the drone telemetry pipeline when AIR-2 telemetry lands.
+function geoOnDroneGps(gps) {
   if (!gps || gps.lat == null || gps.lon == null) return;
-  geo.cam1Gps = gps;
+  geo.droneGps = gps;
   geoRenderMarkers();
 }
 
@@ -2348,12 +2339,12 @@ function runBootIntro() {
   const logLines = [
     { tag: "[mesh]",   msg: "spanning tree converged",          state: "ok" },
     { tag: "[cam1]",   msg: "gnd-1 handshake",                   state: "ok" },
-    { tag: "[cam2]",   msg: "gnd-2 handshake",                   state: "ok" },
+    { tag: "[cam2]",   msg: "air-2 mavlink bridge",              state: "ok" },
     { tag: "[cam3]",   msg: "gnd-3 handshake",                   state: "ok" },
     { tag: "[cam4]",   msg: "gnd-4 handshake",                   state: "warn", stateText: "stale" },
     { tag: "[splat]",  msg: "gaussian cache primed",             state: "ok" },
     { tag: "[ai]",     msg: "vision + sitrep models online",     state: "ok" },
-    { tag: "[uart]",   msg: "mavlink bridge · cam1",             state: "ok" },
+    { tag: "[uart]",   msg: "mavlink bridge · cam2",             state: "ok" },
     { tag: "[gps]",    msg: "geo lock acquiring",                state: "warn", stateText: "pending" },
     { tag: "[ring]",   msg: "sk6812 lattice armed",              state: "ok" },
     { tag: "[enel]",   msg: "operator console ready",            state: "ok", stateText: "go" },

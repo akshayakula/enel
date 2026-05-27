@@ -19,9 +19,9 @@ Hard-won operational knowledge for agents working on this repo. Keep this curren
   - Security is explicitly NOT a concern for this project (plaintext creds OK).
 
 ## Streaming
-- Stream roles are **`cam1 = air-1`** and **`cam2 = gnd-1`**. The ground Pi should publish video,
-  battery, and ring commands as `STREAM_ID=cam2`; the air Pi posts MAVLink telemetry/control as
-  `cam1`.
+- Stream roles are **`cam1 = gnd-1`**, **`cam2 = AIR-2`**, **`cam3 = gnd-3`**,
+  **`cam4 = gnd-4`**. The ground Pi should publish video, battery, and ring commands as
+  `STREAM_ID=cam1`; the air Pi posts MAVLink telemetry/control as `cam2`.
 - Pi camera streamer (`raspi_zero_2_w_code/streamer.sh`, conf at `/boot/firmware/streamer.conf`)
   publishes to the Fly raw TCP endpoint only: `SERVER_HOST=137.66.49.231`, `RTSP_PORT=8554`.
   Browser → Pi commands are Fly polling only via `COMMAND_SERVERS="https://enel-stream.fly.dev"`.
@@ -83,19 +83,19 @@ Hard-won operational knowledge for agents working on this repo. Keep this curren
 
 ## MAVLink-over-Fly (broadcasting drone data to the cloud) — FIXED VIA HTTP POLLING
 - The Pi is behind NAT, so it CONNECTS OUT. The Fly-safe path is now HTTP polling:
-  - Pi POSTs telemetry to `POST /api/pi/cam1/mavlink/uplink` and receives queued commands in
+  - Pi POSTs telemetry to `POST /api/pi/cam2/mavlink/uplink` and receives queued commands in
     the JSON response.
-  - Browser GETs latest telemetry from `GET /api/pi/cam1/mavlink`.
-  - Browser POSTs arm/yaw commands to `POST /api/pi/cam1/mavlink`.
+  - Browser GETs latest telemetry from `GET /api/pi/cam2/mavlink`.
+  - Browser POSTs arm/yaw commands to `POST /api/pi/cam2/mavlink`.
 - `mavlink_bridge.py` defaults to
-  `MAV_UPLINK_URL=https://enel-stream.fly.dev/api/pi/cam1/mavlink/uplink` and polls at
+  `MAV_UPLINK_URL=https://enel-stream.fly.dev/api/pi/cam2/mavlink/uplink` and polls at
   `MAV_HTTP_POLL_HZ=20`, enough to keep yaw commands inside the 250 ms deadman. It still serves
   the local WebSocket on `:8090` only as a direct bench/debug path; Fly operations must use HTTP.
 - Historical blocker: **Fly's HTTP proxy mangles WebSocket permessage-deflate** → frames get RSV1
   set and clients reject with `1002 "reserved bits must be 0"`. Do not reintroduce WebSocket for
   cloud MAVLink.
-- UI note: the drone/MAVLink panel is mounted on `cam1` via `DRONE_STREAM_ID = "cam1"`, and the
-  dashboard labels it as `air-1`. The ground camera/ring/battery unit is `cam2` / `gnd-1`.
+- UI note: the drone/MAVLink panel is mounted on `cam2` via `DRONE_STREAM_ID = "cam2"`, and the
+  dashboard labels it as `AIR-2`. The ground camera/ring/battery unit is `cam1` / `gnd-1`.
 
 ## Helper scripts (`drone_tools/`)
 - `imu_cal.py` — interactive accel calibration (drive via `/tmp/imu_cal_cmd`: `echo go|abort`).

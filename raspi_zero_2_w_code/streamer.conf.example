@@ -7,7 +7,7 @@
 
 # --- identity ---
 PI_NAME=pi-cam-1
-STREAM_ID=cam2
+STREAM_ID=cam1
 
 # --- server ---
 SERVER_HOST=137.66.49.231

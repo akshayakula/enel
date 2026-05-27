@@ -1,5 +1,5 @@
 const STREAM_IDS = ["cam1", "cam2", "cam3", "cam4"];
-const STREAM_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
+const STREAM_LABELS = { cam1: "gnd-1", cam2: "air-2", cam3: "gnd-3", cam4: "gnd-4" };
 const params = new URLSearchParams(window.location.search);
 const overrideHost = (params.get("host") || "").trim();
 
