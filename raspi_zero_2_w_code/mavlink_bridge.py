@@ -244,9 +244,11 @@ async def uplink(mav: mavutil.mavfile) -> None:
         return
     while True:
         try:
+            # Keep permessage-deflate ENABLED (default) — Fly's proxy compresses
+            # WS frames, so the handshake must negotiate deflate or the peer
+            # rejects RSV1 frames (1002). Server side accepts deflate to match.
             async with websockets.connect(UPLINK_URL, ping_interval=10,
-                                          ping_timeout=10, open_timeout=10,
-                                          compression=None) as ws:
+                                          ping_timeout=10, open_timeout=10) as ws:
                 print(f"[mavlink_bridge] uplink connected -> {UPLINK_URL}", flush=True)
 
                 async def pusher():

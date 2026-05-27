@@ -1354,9 +1354,11 @@ app.get("/phone", (req, res) => {
 // two. Works identically on LAN and Fly (no inbound reach to the Pi needed).
 const mavUplinks = new Map(); // cam -> ws (the Pi)
 const mavClients = new Map(); // cam -> Set<ws> (browsers)
-// perMessageDeflate disabled — compression negotiation gets mangled through
-// Fly's TLS proxy (1002 "reserved bits must be 0"); MAVLink frames are tiny anyway.
-const mavWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
+// perMessageDeflate ENABLED — Fly's proxy compresses WS frames regardless, so
+// we must accept the client's deflate offer (handshake advertises it) or clients
+// reject the RSV1 frames with 1002 "reserved bits must be 0". With it on, the
+// negotiation is consistent end-to-end and clients decode the frames correctly.
+const mavWss = new WebSocketServer({ noServer: true, perMessageDeflate: true });
 
 function mavRegisterUplink(cam, ws) {
   const prev = mavUplinks.get(cam);
