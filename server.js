@@ -84,6 +84,46 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, protocol: USE_HTTPS ? "https" : "http" });
 });
 
+// Battery telemetry is pushed by each Pi and rendered as a badge on cam tiles.
+const batteryStore = new Map(); // cam -> { voltage, pct, charging, ts }
+const BATTERY_STALE_MS = 30000;
+
+app.post("/api/battery/:cam", (req, res) => {
+  const { voltage, pct, charging } = req.body || {};
+  if (typeof pct !== "number") return res.status(400).json({ error: "pct (number) required" });
+  batteryStore.set(req.params.cam, {
+    voltage: typeof voltage === "number" ? voltage : null,
+    pct: Math.max(0, Math.min(100, pct)),
+    charging: !!charging,
+    ts: Date.now(),
+  });
+  res.json({ ok: true });
+});
+
+app.get("/api/battery/:cam", (req, res) => {
+  const d = batteryStore.get(req.params.cam);
+  if (!d) return res.json({ pct: null, stale: true });
+  const ageMs = Date.now() - d.ts;
+  res.json({ voltage: d.voltage, pct: d.pct, charging: d.charging, ageMs, stale: ageMs > BATTERY_STALE_MS });
+});
+
+// Publish mode is also pulled by Pis, so the dashboard works across LAN/Fly.
+const PUBLISH_MODES = new Set(["both", "lan", "server"]);
+const controlStore = new Map(); // cam -> { mode, ts }
+
+app.get("/api/control/:cam", (req, res) => {
+  const d = controlStore.get(req.params.cam);
+  if (!d) return res.json({ mode: "both", ts: 0 });
+  res.json({ mode: d.mode, ts: d.ts });
+});
+
+app.post("/api/control/:cam", (req, res) => {
+  const mode = String((req.body && req.body.mode) || "").toLowerCase();
+  if (!PUBLISH_MODES.has(mode)) return res.status(400).json({ error: "mode must be both|lan|server" });
+  controlStore.set(req.params.cam, { mode, ts: Date.now() });
+  res.json({ ok: true, mode });
+});
+
 const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
 const STREAM_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
 const PHONE_STREAM_SLOTS = ["cam3", "cam4"];

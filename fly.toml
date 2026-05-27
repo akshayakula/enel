@@ -7,6 +7,7 @@ primary_region = "iad"
 [env]
   PORT = "8080"
   ENEL_HTTPS = "0"
+  MTX_WEBRTCADDITIONALHOSTS = "137.66.49.231"
   DATA_DIR = "/data"
   RECORDINGS_DIR = "/data/recordings"
   EXPORTS_DIR = "/data/exports/compiled"
@@ -64,3 +65,7 @@ primary_region = "iad"
 
   [[services.ports]]
     port = 8189
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

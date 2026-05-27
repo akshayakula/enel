@@ -23,9 +23,9 @@ capture, no NeoPixel ring. Those ship in v1.
 1. Open **Raspberry Pi Imager** → "Choose OS" → Raspberry Pi OS (other) → **Raspberry Pi OS Lite (64-bit)**.
 2. "Choose Storage" → the SD card (currently named `NO NAME`).
 3. Click the ⚙ gear ("OS Customization") and set:
-   - **Hostname**: `pi-cam1` (use `pi-cam2` etc. for the other Pis)
+   - **Hostname**: `pi-cam-1` for the air unit (use matching names for the other Pis)
    - **Enable SSH**: yes, use your public key (easier) or set a password
-   - **Username/password**: e.g. `akshay` / something
+   - **Username/password**: `pi-sensor1` / `123456`
    - **WiFi**: your SSID + password + country
 4. Click **Save**, then **Write**. Wait for "successfully written" + verify.
 
@@ -36,7 +36,7 @@ When done, the SD will re-mount as `bootfs` under `/Volumes/bootfs`.
 From the repo root:
 
 ```bash
-./raspi_zero_2_w_code/provision-sd.sh cam1 137.66.49.231 pi-cam1
+./raspi_zero_2_w_code/provision-sd.sh cam1 137.66.49.231 pi-cam-1
 ```
 
 Arguments: `<stream-id> <server-host> [pi-name]`. The server host is your
@@ -49,17 +49,17 @@ Eject the SD from the Mac, insert into the Pi, power on.
 Wait ~60 s after power-on for the Pi to join WiFi, then:
 
 ```bash
-./raspi_zero_2_w_code/bootstrap-pi.sh pi-cam1.local akshay
+./raspi_zero_2_w_code/bootstrap-pi.sh pi-cam-1.local pi-sensor1
 ```
 
-This SSH-installs `ffmpeg`, drops in
-`streamer.sh` and the systemd unit, and starts the service. Takes ~2 minutes
-the first time (downloads ffmpeg).
+This SSH-installs `ffmpeg`, drops in `streamer.sh`, the systemd unit, Pi
+control helpers, Wi-Fi auto-join helpers, and captive portal helpers, then
+starts the services. Takes ~2 minutes the first time (downloads ffmpeg).
 
 Tail logs:
 
 ```bash
-ssh akshay@pi-cam1.local 'journalctl -u streamer -f'
+ssh pi-sensor1@pi-cam-1.local 'journalctl -u streamer -f'
 ```
 
 Open the dashboard and the `cam1` tile should go live:
@@ -72,6 +72,23 @@ https://enel-stream.fly.dev/viewer
 
 Edit `/boot/firmware/streamer.conf` on the Pi (SSH or pull the SD card), then
 `sudo systemctl restart streamer` on the Pi.
+
+## Current air-unit access
+
+- Hostname / mDNS: `pi-cam-1.local`
+- SSH username: `pi-sensor1` (note: this is not the hostname)
+- Password: `123456`
+- Login: `ssh pi-sensor1@pi-cam-1.local`
+- Auto-join network: `Akshay's Iphone` with password `Sidsacapper`
+
+The bootstrap installs the same hotspot auto-connect behavior on the air unit
+and the other sensor Pis.
+
+Ring commands from the dashboard use a pull model: the browser writes the
+command to `/api/command/<cam>` on the dashboard, and each Pi polls
+`COMMAND_SERVERS` from `/boot/firmware/streamer.conf`. This lets identify,
+color, clear, and compass commands work through Fly.io even when the Pi is on a
+different Wi-Fi network than the operator laptop.
 
 ## Coming in v1
 

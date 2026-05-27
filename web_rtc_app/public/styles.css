@@ -396,21 +396,34 @@ body.booted  > main.flow-page {
   height: 100%;
   object-fit: cover;
 }
+.cam-fallback {
+  position: absolute;
+  inset: 0;
+  filter: saturate(0.85) brightness(0.9);
+}
+/* LIVE mode: fallback hidden; DEMO mode: shown. Selectors must out-specify
+   `.cam-video-wrap video { display: block }` (0,1,1), so we qualify with the
+   wrap + element + class. */
+.cam-video-wrap video.cam-fallback { display: none; }
+body.demo-mode .cam-video-wrap video.cam-fallback { display: block; }
 
 /* scanlines removed for minimal UI */
 .cam-scanline { display: none; }
 
+/* No-signal placeholder, shown for offline cams in LIVE mode (JS toggles its
+   inline display via the WebRTC reader). Hidden in DEMO mode (fallback covers). */
 .cam-nosig {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--dim);
-  font-size: 0.72rem;
+  font-size: 13px;
+  letter-spacing: 0.25em;
+  color: #46586a;
   background: #05070a;
 }
-.cam-node[data-state="live"] .cam-nosig { display: none !important; }
+body.demo-mode .cam-nosig { display: none !important; }
 
 .cam-stats {
   display: flex;
@@ -1693,3 +1706,102 @@ body.booted  > main.flow-page {
   .cam-row { grid-template-columns: 1fr; }
   .flow-stage { padding-bottom: 220px; }
 }
+
+/* Battery badge overlay (pushed telemetry from each Pi). */
+.batt-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 6;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+  background: rgba(0, 0, 0, 0.55);
+  color: #cfe;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+.batt-badge.batt-ok   { color: #80ed99; border-color: rgba(128, 237, 153, 0.5); }
+.batt-badge.batt-warn { color: #ffd166; border-color: rgba(255, 209, 102, 0.5); }
+.batt-badge.batt-low  { color: #ff6b6b; border-color: rgba(255, 107, 107, 0.6); }
+
+/* Publish-mode selector (Both / LAN / Server) on each cam tile. */
+.pub-mode {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+.pub-mode-label {
+  opacity: 0.5;
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+.pub-mode-btn {
+  padding: 2px 7px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #9bb;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  cursor: pointer;
+  font: inherit;
+  text-transform: uppercase;
+}
+.pub-mode-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.pub-mode-btn.active {
+  background: rgba(128, 237, 153, 0.18);
+  color: #80ed99;
+  border-color: rgba(128, 237, 153, 0.6);
+}
+
+/* Live/Demo segmented switch in the top bar. Both states are always visible;
+   the active one is highlighted and a knob slides under it. */
+.view-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  position: relative;
+  padding: 2px;
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.view-toggle:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+/* sliding knob */
+.view-toggle::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  border-radius: 999px;
+  background: rgba(128, 237, 153, 0.18);
+  border: 1px solid rgba(128, 237, 153, 0.55);
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
+}
+.view-toggle.is-demo::before {
+  transform: translateX(100%);
+  background: rgba(255, 209, 102, 0.18);
+  border-color: rgba(255, 209, 102, 0.6);
+}
+.vt-seg {
+  position: relative;
+  z-index: 1;
+  padding: 4px 12px;
+  color: var(--muted);
+  transition: color 160ms ease;
+}
+.vt-seg.active { color: #fff; }
+.view-toggle.is-live  .vt-seg[data-mode="live"].active { color: #80ed99; }
+.view-toggle.is-demo  .vt-seg[data-mode="demo"].active { color: #ffd166; }

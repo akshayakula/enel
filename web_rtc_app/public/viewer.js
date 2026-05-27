@@ -808,7 +808,7 @@ function attachReader(streamId, baseUrl, ui, container) {
     },
     onError: (err) => {
       ui.video.srcObject = null;
-      ui.status.textContent = "sim";
+      ui.status.textContent = "offline";
       ui.status.className = "cam-status mono offline";
       container.dataset.state = "offline";
       ui.noSig.style.display = "";

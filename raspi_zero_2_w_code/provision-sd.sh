@@ -5,7 +5,7 @@
 #   ./provision-sd.sh <stream-id> <server-host> [pi-name] [bootfs-path]
 #
 # Examples:
-#   ./provision-sd.sh cam1 137.66.49.231 pi-cam1
+#   ./provision-sd.sh cam1 137.66.49.231 pi-cam-1
 #   ./provision-sd.sh cam3 laptop.local  pi-livingroom /Volumes/bootfs
 #
 # After this, eject the SD card and boot the Pi. On first boot the streamer

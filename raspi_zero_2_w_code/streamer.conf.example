@@ -6,7 +6,7 @@
 # When the SD card is in a Mac it's at /Volumes/bootfs/streamer.conf.
 
 # --- identity ---
-PI_NAME=pi-cam1
+PI_NAME=pi-cam-1
 STREAM_ID=cam1
 
 # --- server ---
