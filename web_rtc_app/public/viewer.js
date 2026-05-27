@@ -540,10 +540,13 @@ function wireDroneSocket(streamId, d) {
   let throttlePwm = THROTTLE_IDLE_PWM;
   let throttleDragging = false;
   let throttleSendTimer = null;
-  let lastTeleTs = 0;
+  let lastTeleTs = null;
   let pollBusy = false;
+  let linkState = "";
 
   const setLink = (state) => {
+    if (state === linkState) return;
+    linkState = state;
     d.linkPill.classList.remove("ok", "err", "stale");
     if (state === "ok")    { d.linkPill.textContent = "link up";      d.linkPill.classList.add("ok"); }
     else if (state === "stale") { d.linkPill.textContent = "link stale"; d.linkPill.classList.add("stale"); }
@@ -788,7 +791,7 @@ function wireDroneSocket(streamId, d) {
 
   // Stale-link detection (no tele for 3s → orange).
   setInterval(() => {
-    if (Date.now() - lastTeleTs > 3000) setLink("stale");
+    if (lastTeleTs != null && Date.now() - lastTeleTs > 3000) setLink("stale");
   }, 1000);
 
   // Exposed yaw-pulse for the AI swarm commander. Applies a PWM for duration_ms,
