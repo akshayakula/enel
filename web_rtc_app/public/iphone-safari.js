@@ -14,17 +14,29 @@ let localStream = null;
 let publisher = null;
 let currentStreamId = null;
 
+function publishClass(text) {
+  const value = String(text || "").toLowerCase();
+  if (value.includes("live")) return "live";
+  if (value.includes("fail") || value.includes("error") || value.includes("no free")) return "error";
+  if (value.includes("prepar") || value.includes("finding") || value.includes("retry")) return "pending";
+  return "idle";
+}
+
 function setPublishStatus(text) {
   publishStatus.textContent = text;
+  publishStatus.className = `phone-status mono ${publishClass(text)}`;
 }
 
 function setCameraStatus(text, className = "") {
   cameraStatus.textContent = text;
-  cameraStatus.className = `status ${className}`.trim();
+  cameraStatus.className = `phone-camera-status mono ${className}`.trim();
 }
 
 function setActiveStream(streamId) {
   activeStream.textContent = streamId ? `${STREAM_LABELS[streamId] || streamId} (${streamId})` : "none";
+  for (const button of streamButtons.querySelectorAll("[data-stream-id]")) {
+    button.classList.toggle("active", button.dataset.streamId === streamId);
+  }
 }
 
 async function ensureCamera() {
@@ -43,6 +55,7 @@ async function ensureCamera() {
   });
 
   localVideo.srcObject = localStream;
+  localVideo.classList.add("has-video");
   setCameraStatus("Camera ready", "live");
   return localStream;
 }
@@ -57,6 +70,7 @@ async function cleanupSession() {
     localStream.getTracks().forEach((track) => track.stop());
     localStream = null;
     localVideo.srcObject = null;
+    localVideo.classList.remove("has-video");
   }
 
   currentStreamId = null;
@@ -112,8 +126,9 @@ async function publishToStream(streamId) {
 function renderButtons() {
   for (const streamId of PHONE_STREAM_IDS) {
     const button = document.createElement("button");
-    button.className = "button mono";
-    button.textContent = STREAM_LABELS[streamId] || streamId;
+    button.className = "phone-slot-button mono";
+    button.dataset.streamId = streamId;
+    button.innerHTML = `<span>${STREAM_LABELS[streamId] || streamId}</span><small>${streamId}</small>`;
     button.title = streamId;
     button.addEventListener("click", () => {
       publishToStream(streamId).catch((error) => {
@@ -162,8 +177,8 @@ async function publishAuto({ retry = true } = {}) {
 }
 
 const autoButton = document.createElement("button");
-autoButton.className = "button mono";
-autoButton.textContent = "auto gnd";
+autoButton.className = "phone-slot-button phone-slot-button--auto mono";
+autoButton.innerHTML = "<span>auto assign</span><small>free ground slot</small>";
 autoButton.addEventListener("click", () => {
   publishAuto().catch((error) => {
     console.error(error);
