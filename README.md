@@ -156,6 +156,18 @@ Recommended export options:
 
 The raw fMP4 recordings preserve more structure and are the better default handoff format for later processing. The MP4 export is more convenient for inspection and simple batch pipelines.
 
+## COLMAP preprocessing
+
+There is now a dedicated preprocessing folder at [video_to_gaussian_splat](/Users/puneetvelidi/enel/video_to_gaussian_splat/README.md) for turning recorded videos into a smaller COLMAP-ready image set.
+
+The intended flow is:
+
+1. Extract a low-FPS frame set from each camera video.
+2. Score frames for sharpness / exposure / contrast.
+3. Keep fewer, better, less-redundant frames for COLMAP.
+
+This is meant to reduce the real bottleneck in the pipeline: COLMAP reconstruction time and stability.
+
 ## iPhone Safari app
 
 For iPhone Safari publishing, generate the local certificate before starting the dashboard:
