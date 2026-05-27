@@ -80,19 +80,23 @@ Hard-won operational knowledge for agents working on this repo. Keep this curren
   `{"type":"yaw","pwm":1000-2000}`. Telemetry frames: `{"type":"tele",...}`.
 - VERIFIED: Pi powered by FC, MAVLink link live, **arm/throttle/yaw all controllable from the Pi**.
 
-## MAVLink-over-Fly (broadcasting drone data to the cloud) — IN PROGRESS, BLOCKED
-- The Pi is behind NAT, so it CONNECTS OUT: `server.js` has a relay — Pi dials
-  `/api/pi/<cam>/mavlink/uplink` (pushes telemetry, receives commands); browser connects to
-  `/api/pi/<cam>/mavlink`; the server relays between them. `mavlink_bridge.py` has an outbound
-  `uplink()` coroutine (default `MAV_UPLINK_URL=wss://enel-stream.fly.dev/api/pi/cam1/mavlink/uplink`).
-- **BLOCKER**: **Fly's HTTP proxy mangles WebSocket permessage-deflate** → frames get RSV1 set
-  and clients reject with `1002 "reserved bits must be 0"`, with deflate either ON or OFF.
-  The relay CODE is correct (proven: it streams cleanly on a local-only WS test). The Pi→Fly
-  UPLINK stays connected (deflate off), but the server→client DOWNLINK fails over Fly.
-- **FIX (TODO)**: move MAVLink-over-Fly from WebSocket to **HTTP polling** — the same mechanism
-  the camera/command system already uses successfully through Fly (`/api/battery`, `/api/control`,
-  `/api/command`). i.e. Pi POSTs telemetry + polls commands; browser GETs telemetry + POSTs
-  commands. WebSocket works fine on LAN (no Fly proxy) for local testing.
+## MAVLink-over-Fly (broadcasting drone data to the cloud) — FIXED VIA HTTP POLLING
+- The Pi is behind NAT, so it CONNECTS OUT. The Fly-safe path is now HTTP polling:
+  - Pi POSTs telemetry to `POST /api/pi/cam1/mavlink/uplink` and receives queued commands in
+    the JSON response.
+  - Browser GETs latest telemetry from `GET /api/pi/cam1/mavlink`.
+  - Browser POSTs arm/yaw commands to `POST /api/pi/cam1/mavlink`.
+- `mavlink_bridge.py` defaults to
+  `MAV_UPLINK_URL=https://enel-stream.fly.dev/api/pi/cam1/mavlink/uplink` and polls at
+  `MAV_HTTP_POLL_HZ=20`, enough to keep yaw commands inside the 250 ms deadman. It still serves
+  the local WebSocket on `:8090` for LAN-only bench testing; set `MAV_UPLINK_URL=ws://...` only
+  for that local test path.
+- Historical blocker: **Fly's HTTP proxy mangles WebSocket permessage-deflate** → frames get RSV1
+  set and clients reject with `1002 "reserved bits must be 0"`. Do not reintroduce WebSocket for
+  cloud MAVLink.
+- UI note: the drone/MAVLink panel is mounted on `cam1` via `DRONE_STREAM_ID = "cam1"` even if
+  the camera tile label is currently a ground unit. This preserves the existing stream labels while
+  showing air-unit telemetry/control on the documented MAVLink key.
 
 ## Helper scripts (`drone_tools/`)
 - `imu_cal.py` — interactive accel calibration (drive via `/tmp/imu_cal_cmd`: `echo go|abort`).
