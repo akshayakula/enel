@@ -2356,10 +2356,10 @@ function runBootIntro() {
   // --- 3. systems-online log ---
   const logLines = [
     { tag: "[mesh]",   msg: "spanning tree converged",          state: "ok" },
-    { tag: "[cam1]",   msg: "air-1 handshake",                   state: "ok" },
-    { tag: "[cam2]",   msg: "gnd-1 handshake",                   state: "ok" },
-    { tag: "[cam3]",   msg: "gnd-2 handshake",                   state: "ok" },
-    { tag: "[cam4]",   msg: "gnd-3 handshake",                   state: "warn", stateText: "stale" },
+    { tag: "[cam1]",   msg: "gnd-1 handshake",                   state: "ok" },
+    { tag: "[cam2]",   msg: "gnd-2 handshake",                   state: "ok" },
+    { tag: "[cam3]",   msg: "gnd-3 handshake",                   state: "ok" },
+    { tag: "[cam4]",   msg: "gnd-4 handshake",                   state: "warn", stateText: "stale" },
     { tag: "[splat]",  msg: "gaussian cache primed",             state: "ok" },
     { tag: "[ai]",     msg: "vision + sitrep models online",     state: "ok" },
     { tag: "[uart]",   msg: "mavlink bridge · cam1",             state: "ok" },
