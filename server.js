@@ -89,8 +89,8 @@ app.get("/health", (_req, res) => {
 const batteryStore = new Map(); // cam -> { voltage, pct, charging, ts }
 const BATTERY_STALE_MS = 30000;
 const BATTERY_ALIASES = {
-  gnd1: "cam1",
-  "gnd-1": "cam1",
+  gnd1: "cam2",
+  "gnd-1": "cam2",
   air1: "cam1",
   "air-1": "cam1",
 };
@@ -116,30 +116,25 @@ app.get("/api/battery/:cam", (req, res) => {
   res.json({ voltage: d.voltage, pct: d.pct, charging: d.charging, ageMs, stale: ageMs > BATTERY_STALE_MS });
 });
 
-// Publish mode is also pulled by Pis, so the dashboard works across LAN/Fly.
-const PUBLISH_MODES = new Set(["both", "lan", "server"]);
+// Fly-only publish mode retained for older Pi pollers. LAN/direct publishing is
+// intentionally not selectable from the dashboard anymore.
 const controlStore = new Map(); // cam -> { mode, ts }
 
 app.get("/api/control/:cam", (req, res) => {
   const d = controlStore.get(req.params.cam);
-  if (!d) return res.json({ mode: "both", ts: 0 });
-  res.json({ mode: d.mode, ts: d.ts });
+  if (!d) return res.json({ mode: "server", ts: 0 });
+  res.json({ mode: "server", ts: d.ts });
 });
 
 app.post("/api/control/:cam", (req, res) => {
-  const mode = String((req.body && req.body.mode) || "").toLowerCase();
-  if (!PUBLISH_MODES.has(mode)) return res.status(400).json({ error: "mode must be both|lan|server" });
-  controlStore.set(req.params.cam, { mode, ts: Date.now() });
-  res.json({ ok: true, mode });
+  controlStore.set(req.params.cam, { mode: "server", ts: Date.now() });
+  res.json({ ok: true, mode: "server" });
 });
 
 const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
 const STREAM_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
 const PHONE_STREAM_SLOTS = ["cam3", "cam4"];
-
-const PI_CONTROL_PORT = 8088;
-const PI_CONTROL_TIMEOUT_MS = 3000;
-const piHostForSlot = (slot) => slot.replace(/^cam(\d+)$/, "pi-cam-$1.local");
+const phonePoseStore = new Map(); // cam -> { lat, lon, accuracy, heading_deg, target_bearing_deg, delta_deg, ts }
 
 async function currentStreamSlots() {
   const response = await fetch(`${MEDIAMTX_API_BASE}/v3/paths/list`);
@@ -171,9 +166,8 @@ app.get("/api/state", async (_req, res) => {
   }
 });
 
-// One-shot commands use a pull model so Fly.io never has to reach into a Pi's
-// LAN. The browser writes here; pi-control polls this endpoint and executes the
-// newest command it has not seen.
+// One-shot commands use a Fly pull model. The browser writes here; pi-control
+// polls this endpoint and executes the newest command it has not seen.
 const commandStore = new Map(); // cam -> { cmd, args, ts }
 
 app.post("/api/command/:cam", (req, res) => {
@@ -193,37 +187,28 @@ app.get("/api/command/:cam", (req, res) => {
   res.json(d);
 });
 
-// Proxy a narrow set of pi-control endpoints per cam id.
-// Example: POST /api/pi/cam1/ring/identify  -> http://pi-cam-1.local:8088/ring/identify
-app.all("/api/pi/:id/:path(*)", async (req, res, next) => {
-  const { id, path: subPath } = req.params;
-  if (String(subPath || "").startsWith("mavlink")) return next();
-  if (!STREAM_SLOTS.includes(id)) {
-    return res.status(404).json({ error: "unknown cam" });
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PI_CONTROL_TIMEOUT_MS);
-  try {
-    const target = `http://${piHostForSlot(id)}:${PI_CONTROL_PORT}/${subPath}`;
-    const init = {
-      method: req.method,
-      signal: controller.signal,
-      headers: { "content-type": "application/json" },
-    };
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      init.body = JSON.stringify(req.body || {});
-    }
-    const upstream = await fetch(target, init);
-    const text = await upstream.text();
-    res.status(upstream.status);
-    const ct = upstream.headers.get("content-type");
-    if (ct) res.setHeader("content-type", ct);
-    res.send(text);
-  } catch (err) {
-    res.status(502).json({ error: String(err && err.message ? err.message : err) });
-  } finally {
-    clearTimeout(timer);
-  }
+app.post("/api/phone-pose/:cam", (req, res) => {
+  const cam = req.params.cam;
+  if (!PHONE_STREAM_SLOTS.includes(cam)) return res.status(404).json({ error: "unknown phone cam" });
+  const body = req.body || {};
+  phonePoseStore.set(cam, {
+    lat: typeof body.lat === "number" ? body.lat : null,
+    lon: typeof body.lon === "number" ? body.lon : null,
+    accuracy: typeof body.accuracy === "number" ? body.accuracy : null,
+    heading_deg: typeof body.heading_deg === "number" ? body.heading_deg : null,
+    target_bearing_deg: typeof body.target_bearing_deg === "number" ? body.target_bearing_deg : null,
+    delta_deg: typeof body.delta_deg === "number" ? body.delta_deg : null,
+    spoofed: !!body.spoofed,
+    ts: Date.now(),
+  });
+  res.json({ ok: true });
+});
+
+app.get("/api/phone-pose/:cam", (req, res) => {
+  const d = phonePoseStore.get(req.params.cam);
+  if (!d) return res.json({ stale: true });
+  const ageMs = Date.now() - d.ts;
+  res.json({ ...d, ageMs, stale: ageMs > 15000 });
 });
 
 // -----------------------------------------------------------------------
@@ -1353,7 +1338,8 @@ app.get("/phone", (req, res) => {
 // - Pi POSTs telemetry to /api/pi/<cam>/mavlink/uplink and receives queued commands.
 // - Browser GETs latest telemetry from /api/pi/<cam>/mavlink.
 // - Browser POSTs arm/yaw commands to /api/pi/<cam>/mavlink.
-// The old WebSocket relay is left below for LAN-only bench testing.
+// WebSockets are intentionally not used for the Fly path; Fly WebSocket
+// compression/proxying broke MAVLink frames in testing.
 const mavHttpState = new Map(); // cam -> { tele, teleAt, teleSeq, commands, nextCmdId }
 
 function mavStateFor(cam) {

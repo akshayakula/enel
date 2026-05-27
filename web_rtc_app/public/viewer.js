@@ -1,7 +1,7 @@
 const STREAM_IDS = ["cam1", "cam2", "cam3", "cam4"];
 const DRONE_STREAM_ID = "cam1";
-const NODE_LABELS = { cam1: "gnd-1", cam2: "gnd-2", cam3: "gnd-3", cam4: "gnd-4" };
-const NODE_ROLES  = { cam1: "ground", cam2: "ground", cam3: "ground", cam4: "ground" };
+const NODE_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
+const NODE_ROLES  = { cam1: "airborne", cam2: "ground", cam3: "ground", cam4: "ground" };
 const STATE_POLL_MS = 3000;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -544,6 +544,7 @@ function wireDroneSocket(streamId, d) {
       d.cellAlt.textContent = "—";
     }
     d.cellYaw.textContent = t.att && t.att.yaw_deg != null ? t.att.yaw_deg.toFixed(0) + "°" : "—";
+    d.latestYawDeg = t.att && Number.isFinite(Number(t.att.yaw_deg)) ? Number(t.att.yaw_deg) : d.latestYawDeg;
     // Arm button disabled until link is fresh.
     d.btnArm.disabled = !hbFresh;
 
@@ -735,9 +736,8 @@ function hexToRgb(hex) {
   return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff };
 }
 
-// One-shot command via the pull model: write to this dashboard's
-// /api/command/<cam>; the Pi polls every reachable dashboard and executes it.
-// Works on both LAN and remote (Fly) dashboards.
+// One-shot command via the Fly pull model: write to this dashboard's
+// /api/command/<cam>; the Pi polls Fly and executes the latest command.
 async function sendCommand(streamId, cmd, args, btn) {
   const prev = btn && btn.textContent;
   if (btn && btn.tagName === "BUTTON") btn.disabled = true;
@@ -770,26 +770,7 @@ async function piPost(streamId, sub, body, btn) {
   if (ringCommand) {
     return sendCommand(streamId, ringCommand, body, btn);
   }
-
-  const prev = btn && btn.textContent;
-  if (btn && btn.tagName === "BUTTON") btn.disabled = true;
-  try {
-    const res = await fetch(`/api/pi/${streamId}/${sub}`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (btn && btn.tagName === "BUTTON") {
-      btn.textContent = res.ok ? "ACK" : "ERR";
-      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 900);
-    }
-  } catch (err) {
-    if (btn && btn.tagName === "BUTTON") {
-      btn.textContent = "ERR";
-      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
-    }
-    console.error(`pi control ${streamId}/${sub} failed`, err);
-  }
+  return sendCommand(streamId, sub, body, btn);
 }
 
 function attachReader(streamId, baseUrl, ui, container) {
@@ -850,22 +831,6 @@ function updateFeedStats(streamId, slot) {
   lastPollTs.set(streamId, now);
 }
 
-async function pollPiTelemetry(streamId) {
-  const cam = cams.get(streamId);
-  if (!cam) return;
-  try {
-    const res = await fetch(`/api/pi/${streamId}/status`);
-    if (!res.ok) throw new Error(`pi status ${res.status}`);
-    const body = await res.json();
-    if (body.cpu_temp_c != null) cam.tempEl.textContent = `${body.cpu_temp_c.toFixed(0)}°`;
-    const override = body.ring_override;
-    cam.ringEl.textContent = override && override.mode ? override.mode : "auto";
-  } catch {
-    cam.tempEl.textContent = "—";
-    cam.ringEl.textContent = "—";
-  }
-}
-
 async function pollState() {
   try {
     const res = await fetch("/api/state");
@@ -878,8 +843,6 @@ async function pollState() {
     for (const slot of body.slots) updateFeedStats(slot.id, slot);
     drawPipes();
 
-    // Telemetry (CPU temp, ring mode) — only poll live cams to avoid 502s.
-    for (const slot of body.slots) if (slot.ready) pollPiTelemetry(slot.id);
   } catch (err) {
     serverStatus.textContent = "down";
     serverStatus.className = "pill mono pill-err";
@@ -1501,12 +1464,39 @@ function mmRangeInfo(id) {
 // bearing always reaches the Pi even if drag stops mid-window.
 const mmThrottle = new Map();
 const MM_SEND_GAP_MS = 120;
+const MM_AIR_SEND_GAP_MS = 900;
+function normDeg(value) {
+  return ((Number(value) % 360) + 360) % 360;
+}
+function shortestDeg(target, current) {
+  return ((normDeg(target) - normDeg(current) + 540) % 360) - 180;
+}
+function mmSendAirBearing(id) {
+  const d = cams.get(id);
+  if (!d || typeof d.yawPulse !== "function") return;
+  const target = Math.round(mmState[id].bearing);
+  const current = Number.isFinite(d.latestYawDeg) ? d.latestYawDeg : 0;
+  const delta = shortestDeg(target, current);
+  if (Math.abs(delta) < 7) {
+    d.yawPulse(1500, 120);
+    return;
+  }
+  const mag = Math.min(330, Math.max(120, Math.round(Math.abs(delta) * 2.2)));
+  const pwm = delta > 0 ? 1500 + mag : 1500 - mag;
+  const duration = Math.min(1400, Math.max(220, Math.round(Math.abs(delta) * 7)));
+  d.yawPulse(pwm, duration);
+}
 function mmSendBearing(id) {
   const now = Date.now();
   let s = mmThrottle.get(id);
   if (!s) { s = { lastTs: 0, trailing: null }; mmThrottle.set(id, s); }
+  const gap = id === DRONE_STREAM_ID ? MM_AIR_SEND_GAP_MS : MM_SEND_GAP_MS;
   const doSend = () => {
     s.lastTs = Date.now();
+    if (id === DRONE_STREAM_ID) {
+      mmSendAirBearing(id);
+      return;
+    }
     const b = Math.round(mmState[id].bearing);
     const info = mmRangeInfo(id);
     const payload = { bearing_deg: b, ttl: 600 };
@@ -1518,11 +1508,11 @@ function mmSendBearing(id) {
     }
     piPost(id, "ring/compass", payload, null);
   };
-  if (now - s.lastTs >= MM_SEND_GAP_MS) {
+  if (now - s.lastTs >= gap) {
     if (s.trailing) { clearTimeout(s.trailing); s.trailing = null; }
     doSend();
   } else if (!s.trailing) {
-    s.trailing = setTimeout(() => { s.trailing = null; doSend(); }, MM_SEND_GAP_MS - (now - s.lastTs));
+    s.trailing = setTimeout(() => { s.trailing = null; doSend(); }, gap - (now - s.lastTs));
   }
 }
 
@@ -2203,7 +2193,12 @@ function wireGeo() {
   };
   btn.addEventListener("click", startWatch);
 
-  // Auto-start if permissions already granted.
+  // Ask on load. Operator location anchors the tactical map and camera-pointing
+  // guidance; browsers will no-op or surface their normal permission prompt.
+  setTimeout(startWatch, 500);
+
+  // Also recover if the browser has a stored grant and the first prompt was
+  // suppressed by platform policy.
   if (navigator.permissions && navigator.permissions.query) {
     navigator.permissions.query({ name: "geolocation" }).then((p) => {
       if (p.state === "granted") startWatch();

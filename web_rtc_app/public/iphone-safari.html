@@ -57,6 +57,30 @@
             <div class="phone-video-empty mono">waiting for camera permission</div>
           </div>
         </article>
+
+        <article class="phone-panel phone-compass-panel">
+          <div class="phone-panel-head">
+            <div>
+              <div class="phone-kicker mono">camera pointing</div>
+              <div class="phone-panel-title mono">field compass</div>
+            </div>
+            <button class="phone-compass-btn mono" id="compassButton">enable</button>
+          </div>
+          <div class="phone-compass-body">
+            <div class="phone-dial" id="phoneDial">
+              <div class="phone-dial-ring"></div>
+              <div class="phone-dial-needle" id="phoneNeedle"></div>
+              <div class="phone-dial-target" id="phoneTargetNeedle"></div>
+              <div class="phone-dial-n mono">N</div>
+            </div>
+            <div class="phone-compass-readout mono">
+              <div><span>heading</span><strong id="phoneHeading">--</strong></div>
+              <div><span>target</span><strong id="phoneTarget">000°</strong></div>
+              <div><span>location</span><strong id="phoneLocation">requesting</strong></div>
+            </div>
+          </div>
+          <div class="phone-pointing mono" id="phonePointing">align camera with target bearing</div>
+        </article>
       </section>
     </main>
 

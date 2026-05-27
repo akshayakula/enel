@@ -6,13 +6,38 @@ const publishStatus = document.getElementById("publishStatus");
 const cameraStatus = document.getElementById("cameraStatus");
 const localVideo = document.getElementById("localVideo");
 const stopButton = document.getElementById("stopButton");
+const compassButton = document.getElementById("compassButton");
+const phoneNeedle = document.getElementById("phoneNeedle");
+const phoneTargetNeedle = document.getElementById("phoneTargetNeedle");
+const phoneHeading = document.getElementById("phoneHeading");
+const phoneTarget = document.getElementById("phoneTarget");
+const phoneLocation = document.getElementById("phoneLocation");
+const phonePointing = document.getElementById("phonePointing");
 
 const params = new URLSearchParams(window.location.search);
 const requestedStreamId = (params.get("streamId") || "").trim();
+const targetBearingDeg = normalizeDeg(Number(params.get("bearing_deg") || params.get("bearing") || 0));
 
 let localStream = null;
 let publisher = null;
 let currentStreamId = null;
+let lastHeadingDeg = null;
+let headingSpoofed = false;
+let lastLocation = null;
+let poseTimer = null;
+
+function normalizeDeg(value) {
+  return ((Number(value) % 360) + 360) % 360;
+}
+
+function shortestDeltaDeg(target, current) {
+  return ((normalizeDeg(target) - normalizeDeg(current) + 540) % 360) - 180;
+}
+
+function formatDeg(value) {
+  if (!Number.isFinite(value)) return "--";
+  return `${Math.round(normalizeDeg(value)).toString().padStart(3, "0")}°`;
+}
 
 function isExpectedCameraError(error) {
   return ["NotFoundError", "NotAllowedError", "SecurityError"].includes(error?.name);
@@ -41,6 +66,108 @@ function setActiveStream(streamId) {
   for (const button of streamButtons.querySelectorAll("[data-stream-id]")) {
     button.classList.toggle("active", button.dataset.streamId === streamId);
   }
+}
+
+function updateCompass() {
+  if (!phoneHeading || !phoneTarget || !phonePointing) return;
+  const heading = Number.isFinite(lastHeadingDeg) ? normalizeDeg(lastHeadingDeg) : targetBearingDeg;
+  const delta = shortestDeltaDeg(targetBearingDeg, heading);
+  phoneHeading.textContent = `${formatDeg(heading)}${headingSpoofed ? " sim" : ""}`;
+  phoneTarget.textContent = formatDeg(targetBearingDeg);
+  if (phoneNeedle) phoneNeedle.style.transform = `rotate(${-heading}deg)`;
+  if (phoneTargetNeedle) phoneTargetNeedle.style.transform = `rotate(${targetBearingDeg - heading}deg)`;
+  if (Math.abs(delta) <= 8) {
+    phonePointing.textContent = "camera aligned";
+    phonePointing.classList.add("aligned");
+  } else {
+    const dir = delta > 0 ? "right" : "left";
+    phonePointing.textContent = `turn ${dir} ${Math.round(Math.abs(delta))}°`;
+    phonePointing.classList.remove("aligned");
+  }
+}
+
+function onOrientation(event) {
+  let heading = null;
+  if (Number.isFinite(event.webkitCompassHeading)) {
+    heading = event.webkitCompassHeading;
+  } else if (Number.isFinite(event.alpha)) {
+    heading = 360 - event.alpha;
+  }
+  if (!Number.isFinite(heading)) return;
+  headingSpoofed = false;
+  lastHeadingDeg = normalizeDeg(heading);
+  updateCompass();
+}
+
+function startSpoofCompass() {
+  if (Number.isFinite(lastHeadingDeg) && !headingSpoofed) return;
+  headingSpoofed = true;
+  lastHeadingDeg = targetBearingDeg;
+  updateCompass();
+}
+
+async function enableCompass() {
+  try {
+    if (window.DeviceOrientationEvent?.requestPermission) {
+      const result = await window.DeviceOrientationEvent.requestPermission();
+      if (result !== "granted") {
+        startSpoofCompass();
+        return;
+      }
+    }
+    window.addEventListener("deviceorientationabsolute", onOrientation, true);
+    window.addEventListener("deviceorientation", onOrientation, true);
+    setTimeout(() => {
+      if (!Number.isFinite(lastHeadingDeg)) startSpoofCompass();
+    }, 1200);
+  } catch {
+    startSpoofCompass();
+  }
+}
+
+function requestLocation() {
+  if (!phoneLocation) return;
+  if (!("geolocation" in navigator)) {
+    phoneLocation.textContent = "unavailable";
+    return;
+  }
+  phoneLocation.textContent = "requesting";
+  navigator.geolocation.watchPosition((pos) => {
+    lastLocation = {
+      lat: pos.coords.latitude,
+      lon: pos.coords.longitude,
+      accuracy: pos.coords.accuracy,
+    };
+    phoneLocation.textContent = `±${Math.round(lastLocation.accuracy)}m`;
+  }, (err) => {
+    phoneLocation.textContent = err?.code === 1 ? "denied" : "unfixed";
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 2000,
+    timeout: 15000,
+  });
+}
+
+function startPoseUploads() {
+  if (poseTimer) return;
+  poseTimer = setInterval(() => {
+    if (!currentStreamId) return;
+    const heading = Number.isFinite(lastHeadingDeg) ? normalizeDeg(lastHeadingDeg) : null;
+    const body = {
+      heading_deg: heading,
+      target_bearing_deg: targetBearingDeg,
+      delta_deg: heading == null ? null : shortestDeltaDeg(targetBearingDeg, heading),
+      spoofed: headingSpoofed,
+      lat: lastLocation?.lat ?? null,
+      lon: lastLocation?.lon ?? null,
+      accuracy: lastLocation?.accuracy ?? null,
+    };
+    fetch(`/api/phone-pose/${currentStreamId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).catch(() => {});
+  }, 1000);
 }
 
 async function ensureCamera() {
@@ -149,6 +276,10 @@ stopButton.addEventListener("click", () => {
   });
 });
 
+if (compassButton) {
+  compassButton.addEventListener("click", enableCompass);
+}
+
 window.addEventListener("pagehide", () => {
   cleanupSession().catch(() => {});
 });
@@ -191,6 +322,10 @@ autoButton.addEventListener("click", () => {
 streamButtons.appendChild(autoButton);
 
 renderButtons();
+updateCompass();
+requestLocation();
+startPoseUploads();
+enableCompass();
 
 if (PHONE_STREAM_IDS.includes(requestedStreamId)) {
   publishToStream(requestedStreamId).catch((error) => {

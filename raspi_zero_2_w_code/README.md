@@ -36,11 +36,11 @@ When done, the SD will re-mount as `bootfs` under `/Volumes/bootfs`.
 From the repo root:
 
 ```bash
-./raspi_zero_2_w_code/provision-sd.sh cam1 137.66.49.231 pi-cam-1
+./raspi_zero_2_w_code/provision-sd.sh cam2 137.66.49.231 pi-cam-1
 ```
 
-Arguments: `<stream-id> <server-host> [pi-name]`. The server host is your
-Mac's LAN IP for local development, or `137.66.49.231` for the deployed Fly app.
+Arguments: `<stream-id> <server-host> [pi-name]`. Use `137.66.49.231` for the
+deployed Fly app; the ground camera unit is `cam2`.
 
 Eject the SD from the Mac, insert into the Pi, power on.
 
@@ -62,7 +62,7 @@ Tail logs:
 ssh pi-sensor1@pi-cam-1.local 'journalctl -u streamer -f'
 ```
 
-Open the dashboard and the `cam1` tile should go live:
+Open the dashboard and the `cam2` / `gnd-1` tile should go live:
 
 ```text
 https://enel-stream.fly.dev/viewer
@@ -73,7 +73,7 @@ https://enel-stream.fly.dev/viewer
 Edit `/boot/firmware/streamer.conf` on the Pi (SSH or pull the SD card), then
 `sudo systemctl restart streamer` on the Pi.
 
-## Current air-unit access
+## Current ground-unit access
 
 - Hostname / mDNS: `pi-cam-1.local`
 - SSH username: `pi-sensor1` (note: this is not the hostname)
@@ -94,7 +94,6 @@ different Wi-Fi network than the operator laptop.
 
 - Python rewrite of `streamer.sh` with the same camera handle used for both
   live stream **and** on-demand high-quality burst stills (splat capture).
-- WebSocket control channel to the laptop.
 - NeoPixel 16-ring compass + status UI on GPIO 18.
 - `pi-gen` image build so a fresh SD is one `dd` away from running, no
   bootstrap step.

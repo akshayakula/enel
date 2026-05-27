@@ -95,13 +95,6 @@ def _dashboard_urls(conf: dict[str, str]) -> list[str]:
         if part:
             urls.append(part.rstrip("/"))
 
-    host = conf.get("SERVER_HOST", "")
-    if host:
-        if host.endswith(".fly.dev"):
-            urls.append(f"https://{host}".rstrip("/"))
-        elif "." in host:
-            urls.append(f"http://{host}:3605".rstrip("/"))
-
     urls.append(DEFAULT_REMOTE_DASHBOARD)
 
     out: list[str] = []
@@ -187,6 +180,22 @@ def _apply_ring_command(cmd: str, args: dict) -> bool:
     return False
 
 
+def _apply_system_command(cmd: str) -> bool:
+    if cmd == "system/poweroff":
+        subprocess.Popen(
+            ["/bin/sh", "-c", "sleep 1 && /sbin/poweroff"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    if cmd == "system/reboot":
+        subprocess.Popen(
+            ["/bin/sh", "-c", "sleep 1 && /sbin/reboot"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return True
+    return False
+
+
 def _command_poller() -> None:
     conf = _read_streamer_conf()
     stream_id = conf.get("STREAM_ID", "")
@@ -217,6 +226,8 @@ def _command_poller() -> None:
             state[state_key] = last_ts
             _write_command_state(state)
             if _apply_ring_command(str(cmd), args):
+                print(f"command-poller: applied {cmd} from {base_url}", flush=True)
+            elif _apply_system_command(str(cmd)):
                 print(f"command-poller: applied {cmd} from {base_url}", flush=True)
         time.sleep(COMMAND_POLL_SECONDS)
 

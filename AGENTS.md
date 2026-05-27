@@ -19,14 +19,15 @@ Hard-won operational knowledge for agents working on this repo. Keep this curren
   - Security is explicitly NOT a concern for this project (plaintext creds OK).
 
 ## Streaming
-- Stream key is **`cam1`** (a `gnd1` rename was tried and fully reverted — Pi publishes RTSP `cam1`).
+- Stream roles are **`cam1 = air-1`** and **`cam2 = gnd-1`**. The ground Pi should publish video,
+  battery, and ring commands as `STREAM_ID=cam2`; the air Pi posts MAVLink telemetry/control as
+  `cam1`.
 - Pi camera streamer (`raspi_zero_2_w_code/streamer.sh`, conf at `/boot/firmware/streamer.conf`)
-  dual-publishes via ffmpeg `tee` to `FLY_HOST=137.66.49.231` AND `LAN_HOST=192.168.1.248`.
-  Conf vars: `STREAM_ID`, `FLY_HOST`, `LAN_HOST`, `RTSP_PORT=8554`, `PUBLISH_MODE` (both|lan|server).
-  `SERVER_HOST` in the script is a no-op — only FLY_HOST/LAN_HOST count.
+  publishes to the Fly raw TCP endpoint only: `SERVER_HOST=137.66.49.231`, `RTSP_PORT=8554`.
+  Browser → Pi commands are Fly polling only via `COMMAND_SERVERS="https://enel-stream.fly.dev"`.
 - **Common outage**: empty `streamer.conf` (0 bytes) → service crash-loops "STREAM_ID not set".
   Fix by rewriting the conf, then `systemctl reset-failed streamer && systemctl restart streamer`.
-- Repo's `streamer.sh`/`streamer.conf.example` were stale vs the installed dual-publish version.
+- Do not reintroduce LAN proxy/publish controls; `/api/command/<cam>` is the supported control path.
 
 ## Flight controller (the air-unit drone)
 - **ArduCopter 4.6.3, quad-X**, **BlueJay (BLHeli_S) ESCs**, DShot300. Connect via `pymavlink`.
@@ -89,14 +90,12 @@ Hard-won operational knowledge for agents working on this repo. Keep this curren
 - `mavlink_bridge.py` defaults to
   `MAV_UPLINK_URL=https://enel-stream.fly.dev/api/pi/cam1/mavlink/uplink` and polls at
   `MAV_HTTP_POLL_HZ=20`, enough to keep yaw commands inside the 250 ms deadman. It still serves
-  the local WebSocket on `:8090` for LAN-only bench testing; set `MAV_UPLINK_URL=ws://...` only
-  for that local test path.
+  the local WebSocket on `:8090` only as a direct bench/debug path; Fly operations must use HTTP.
 - Historical blocker: **Fly's HTTP proxy mangles WebSocket permessage-deflate** → frames get RSV1
   set and clients reject with `1002 "reserved bits must be 0"`. Do not reintroduce WebSocket for
   cloud MAVLink.
-- UI note: the drone/MAVLink panel is mounted on `cam1` via `DRONE_STREAM_ID = "cam1"` even if
-  the camera tile label is currently a ground unit. This preserves the existing stream labels while
-  showing air-unit telemetry/control on the documented MAVLink key.
+- UI note: the drone/MAVLink panel is mounted on `cam1` via `DRONE_STREAM_ID = "cam1"`, and the
+  dashboard labels it as `air-1`. The ground camera/ring/battery unit is `cam2` / `gnd-1`.
 
 ## Helper scripts (`drone_tools/`)
 - `imu_cal.py` — interactive accel calibration (drive via `/tmp/imu_cal_cmd`: `echo go|abort`).
