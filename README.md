@@ -89,6 +89,9 @@ Phones can join as temporary camera publishers at:
 https://enel-stream.fly.dev/phone
 ```
 
+Phone publishers auto-pair only into `gnd-2` and `gnd-3` (`cam3`/`cam4`).
+`air-1` (`cam1`) is reserved for the drone.
+
 The Pi publisher should target the dedicated Fly IPv4 on RTSP/TCP:
 
 ```text
@@ -164,10 +167,14 @@ For iPhone Safari publishing, generate the local certificate before starting the
 Then open the phone publisher:
 
 ```text
-https://LAPTOP_IP:3000/phone?streamId=cam1
+https://LAPTOP_IP:3000/phone
 ```
 
-This app publishes video only into the same `cam1` through `cam4` MediaMTX slots as the Pis. Browser phones publish through the dashboard's WebRTC publisher path; the mapping workflow records from MediaMTX afterward, so phone and Pi streams are handled the same way by Lambda.
+This app publishes video only into `gnd-2` or `gnd-3` (`cam3`/`cam4`).
+Browser phones publish through the dashboard's WebRTC publisher path; the
+mapping workflow records from MediaMTX afterward, so phone and Pi streams are
+handled the same way by Lambda. Use `?streamId=cam3` or `?streamId=cam4` only
+when manually pinning a phone slot.
 
 If the iPhone does not trust the local certificate yet, download it from:
 

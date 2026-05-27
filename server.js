@@ -85,6 +85,8 @@ app.get("/health", (_req, res) => {
 });
 
 const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
+const STREAM_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
+const PHONE_STREAM_SLOTS = ["cam3", "cam4"];
 
 const PI_CONTROL_PORT = 8088;
 const PI_CONTROL_TIMEOUT_MS = 3000;
@@ -335,8 +337,10 @@ app.post("/api/ai/intent", async (req, res) => {
   }
 });
 
-app.get("/api/next-slot", async (_req, res) => {
+app.get("/api/next-slot", async (req, res) => {
   try {
+    const role = String(req.query.role || req.query.kind || "phone");
+    const candidates = role === "all" ? STREAM_SLOTS : PHONE_STREAM_SLOTS;
     const response = await fetch(`${MEDIAMTX_API_BASE}/v3/paths/list`);
     if (!response.ok) {
       res.status(502).json({ error: `mediamtx api ${response.status}` });
@@ -348,12 +352,16 @@ app.get("/api/next-slot", async (_req, res) => {
         .filter((p) => p.ready === true)
         .map((p) => p.name),
     );
-    const free = STREAM_SLOTS.find((id) => !busy.has(id));
+    const free = candidates.find((id) => !busy.has(id));
     if (!free) {
-      res.status(503).json({ error: "all slots busy", busy: [...busy] });
+      res.status(503).json({
+        error: role === "all" ? "all slots busy" : "phone slots gnd-2/gnd-3 busy",
+        candidates,
+        busy: [...busy],
+      });
       return;
     }
-    res.json({ streamId: free, busy: [...busy] });
+    res.json({ streamId: free, label: STREAM_LABELS[free] || free, candidates, busy: [...busy] });
   } catch (err) {
     res.status(502).json({ error: String(err) });
   }
@@ -526,6 +534,34 @@ function summarizeProgress(session, events = []) {
   };
 }
 
+function secondsBetween(start, end) {
+  const startMs = Date.parse(start || "");
+  const endMs = Date.parse(end || "");
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return null;
+  return (endMs - startMs) / 1000;
+}
+
+function summarizeCompute(session, job) {
+  const result = session?.result || job?.result || null;
+  const resultSeconds = Number(result?.elapsed_s ?? result?.elapsedSeconds ?? result?.elapsed);
+  const startedAt = session?.lambdaStartedAt || job?.startedAt || session?.capture?.completedAt || null;
+  const completedAt = session?.lambdaCompletedAt || session?.completedAt || null;
+  const measuredSeconds = Number.isFinite(resultSeconds)
+    ? resultSeconds
+    : secondsBetween(startedAt, completedAt);
+  const runningSeconds = session?.status === "lambda-running" && startedAt
+    ? secondsBetween(startedAt, new Date().toISOString())
+    : null;
+  const seconds = Number.isFinite(measuredSeconds) ? measuredSeconds : runningSeconds;
+  return {
+    startedAt,
+    completedAt,
+    running: session?.status === "lambda-running",
+    inferenceSeconds: Number.isFinite(seconds) ? seconds : null,
+    computeSeconds: Number.isFinite(seconds) ? seconds : null,
+  };
+}
+
 function isCancelledSession(session) {
   return session?.status === "cancelled";
 }
@@ -540,6 +576,7 @@ function publicSession(session) {
     splatUrl,
     viewerUrl: splatUrl ? `/splat/?url=${encodeURIComponent(splatUrl)}` : null,
     job,
+    compute: summarizeCompute(session, job),
     progress: summarizeProgress(session, events),
   };
 }
@@ -904,10 +941,11 @@ function startSplatJob(body = {}, options = {}) {
     stdio: ["ignore", stdoutLog, stderrLog],
     detached: false,
   });
+  const startedAt = new Date().toISOString();
 
   splatJobs.set(jobId, {
     proc,
-    startedAt: new Date().toISOString(),
+    startedAt,
     workspace,
     inputPaths,
     sessionId: options.sessionId || null,
@@ -918,6 +956,7 @@ function startSplatJob(body = {}, options = {}) {
       status: "lambda-running",
       jobId,
       jobStatusUrl: `/api/splat/jobs/${jobId}`,
+      lambdaStartedAt: startedAt,
     });
   }
 
@@ -944,9 +983,11 @@ function startSplatJob(body = {}, options = {}) {
       const result = readJsonSafe(resultPath);
       const error = readJsonSafe(path.join(workspace, "error.json"));
       const missingSplat = code === 0 && !fs.existsSync(splatAbs);
+      const finishedAt = new Date().toISOString();
       patchSession(options.sessionId, {
         status: code === 0 && fs.existsSync(splatAbs) ? "completed" : "failed",
-        completedAt: new Date().toISOString(),
+        completedAt: finishedAt,
+        lambdaCompletedAt: finishedAt,
         splatUrl: fs.existsSync(splatAbs) ? splatRel : null,
         error: error?.error || error?.stderrTail || (missingSplat ? "splat job completed without scene.splat" : `splat job exited ${code ?? signal}`),
         result,

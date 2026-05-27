@@ -33,7 +33,7 @@
           <div class="hdr-expand mono">edge-networked environment lattice</div>
         </div>
         <div class="hdr-right">
-          <a class="ctrl-btn hdr-btn mono" id="btnPhone" href="/phone-publish" title="Use this device as a phone camera publisher">phone</a>
+          <a class="ctrl-btn hdr-btn mono" id="btnPhone" href="/phone-publish" title="Use this device as a gnd-2/gnd-3 phone camera publisher">phone</a>
           <button class="ctrl-btn hdr-btn mono" id="btnSitrep" title="Fuse all live feeds into a single report">sitrep</button>
           <button class="ctrl-btn hdr-btn mono" id="btnSwarm" title="Issue natural-language swarm orders">swarm</button>
           <button class="ctrl-btn hdr-btn mono" id="btnGps" title="Request browser geolocation">gps</button>
@@ -134,29 +134,6 @@
         </div>
         <div class="session-list" id="sessionList">
           <div class="session-empty mono">loading sessions…</div>
-        </div>
-      </section>
-
-      <section class="splat-be-section">
-        <div class="splat-be-head">
-          <div class="splat-be-left">
-            <span class="splat-be-title mono">bird's-eye · gaussian splat</span>
-            <span class="splat-be-state mono" id="splatBeState">dormant</span>
-          </div>
-          <div class="splat-be-right">
-            <button class="ctrl-btn mono" id="btnSplatBeToggle">activate</button>
-          </div>
-        </div>
-        <div class="splat-be-stage" id="splatBeStage">
-          <div class="splat-be-placeholder mono" id="splatBePlaceholder">
-            click <b>activate</b> to load the ~150 MB bird's-eye render
-          </div>
-          <div class="splat-be-spinner mono" id="splatBeSpinner" style="display:none">
-            <div class="be-spin"></div>
-            <span>loading splat…</span>
-          </div>
-          <!-- iframe injected on activate -->
-          <div class="splat-be-overlay" id="splatBeOverlay"></div>
         </div>
       </section>
 

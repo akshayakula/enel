@@ -1838,8 +1838,8 @@ async function startFusionScan(btn, statusEl) {
   const runToken = ++fusionRunToken;
   btn.disabled = true;
 
-  // Server-side capture reads the MediaMTX paths directly, so Pi RTSP and
-  // phone WHIP publishers both enter Lambda through the same cam slots.
+  // Server-side capture reads the MediaMTX paths directly; phone WHIP
+  // publishers are constrained to gnd-2/gnd-3 while air-1 stays reserved.
   btn.textContent = "recording…";
   setFusionStatus(statusEl, `recording ${LAMBDA_SCAN_SECONDS}s from MediaMTX · ${ready.length} cams`, "working");
   const startRes = await fetch("/api/sessions/lambda/record-start", {
@@ -1964,6 +1964,34 @@ function loadSplatUrl(url, sceneName) {
   if (nameEl && sceneName) nameEl.textContent = sceneName;
 }
 
+function formatDuration(seconds) {
+  const value = Number(seconds);
+  if (!Number.isFinite(value) || value < 0) return "";
+  const total = Math.round(value);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h) return `${h}h ${m}m`;
+  if (m) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function sessionComputeText(session) {
+  const seconds = Number(
+    session.compute?.inferenceSeconds
+    ?? session.compute?.computeSeconds
+    ?? session.result?.elapsed_s
+    ?? session.job?.result?.elapsed_s,
+  );
+  if (!Number.isFinite(seconds)) return "";
+  const prefix = session.compute?.running ? "compute running" : "compute/inference";
+  return `${prefix} ${formatDuration(seconds)}`;
+}
+
+function streamLabel(streamId) {
+  return NODE_LABELS[streamId] || streamId;
+}
+
 function renderSessions(seedSessions, merge = false) {
   const list = document.getElementById("sessionList");
   const count = document.getElementById("sessionCount");
@@ -1984,10 +2012,12 @@ function renderSessions(seedSessions, merge = false) {
   }
 
   list.innerHTML = sessions.map((session) => {
-    const cams = Array.isArray(session.cams) ? session.cams.join(", ") : "";
+    const cams = Array.isArray(session.cams) ? session.cams.map(streamLabel).join(", ") : "";
     const when = session.createdAt ? new Date(session.createdAt).toLocaleString() : "";
     const status = session.status || "unknown";
     const progress = session.progress?.label || session.error || "";
+    const compute = sessionComputeText(session);
+    const meta = [when, cams, compute].filter(Boolean).join(" · ");
     const tail = Array.isArray(session.progress?.tail) ? session.progress.tail.slice(-4) : [];
     const open = session.splatUrl
       ? `<button class="ctrl-btn mono session-open" data-url="${escapeHtml(session.splatUrl)}" data-name="${escapeHtml(session.title || session.id)}">open</button>`
@@ -1999,7 +2029,7 @@ function renderSessions(seedSessions, merge = false) {
       <article class="session-row ${escapeHtml(status)}">
         <div class="session-main">
           <strong>${escapeHtml(session.title || session.id)}</strong>
-          <span>${escapeHtml(when)} · ${escapeHtml(cams)}</span>
+          <span>${escapeHtml(meta)}</span>
           ${progress ? `<em>${escapeHtml(progress)}</em>` : ""}
           ${log}
         </div>
@@ -2050,201 +2080,6 @@ function wireSplatChrome() {
 }
 
 wireSplatChrome();
-
-// ---------------------------------------------------------------------------
-// Splat bird's-eye view — loads the splat with ?view=topdown, shows a spinner
-// until the child frame postMessages "enel-splat-ready", then renders unit
-// + POI markers over the rendered scene using minimap world coords.
-// ---------------------------------------------------------------------------
-
-const SPLAT_BE_KEY = "enel.splatBe.activated.v1";
-const SPLAT_BE_URL = "/splat/?view=topdown&url=/scenes/stump.splat";
-let splatBeActivated = false;
-let splatBeReady = false;
-
-function setBeState(label, cls = "") {
-  const s = document.getElementById("splatBeState");
-  if (!s) return;
-  s.textContent = label;
-  s.className = `splat-be-state mono ${cls}`.trim();
-}
-
-function ensureBeOverlaySvg() {
-  const ov = document.getElementById("splatBeOverlay");
-  if (!ov) return null;
-  let svg = ov.querySelector("svg");
-  if (svg) return svg;
-  svg = document.createElementNS(SVG_NS, "svg");
-  svg.setAttribute("viewBox", `0 0 ${MAP_VB_W} ${MAP_VB_H}`);
-  svg.setAttribute("preserveAspectRatio", "xMidYMid slice");
-  ov.appendChild(svg);
-  return svg;
-}
-
-function renderBeOverlay() {
-  const svg = ensureBeOverlaySvg();
-  if (!svg || !splatBeActivated || !splatBeReady) return;
-  svg.innerHTML = "";
-
-  // POI beams (under units)
-  if (mmPOI) {
-    const px = mmPOI.x * MAP_VB_W;
-    const py = mmPOI.y * MAP_VB_H;
-    for (const id of STREAM_IDS) {
-      const s = mmState[id]; if (!s) continue;
-      const ux = s.x * MAP_VB_W, uy = s.y * MAP_VB_H;
-      const line = document.createElementNS(SVG_NS, "line");
-      line.setAttribute("x1", ux); line.setAttribute("y1", uy);
-      line.setAttribute("x2", px); line.setAttribute("y2", py);
-      line.setAttribute("class", "be-beam");
-      svg.appendChild(line);
-    }
-  }
-
-  // Units
-  for (const id of STREAM_IDS) {
-    const s = mmState[id]; if (!s) continue;
-    const role = NODE_ROLES[id];
-    const live = readyState.get(id);
-    const g = document.createElementNS(SVG_NS, "g");
-    g.setAttribute("class", `be-unit role-${role}${live ? "" : " offline"}`);
-    const cx = s.x * MAP_VB_W, cy = s.y * MAP_VB_H;
-    g.setAttribute("transform", `translate(${cx}, ${cy})`);
-
-    const rad = (s.bearing - 90) * Math.PI / 180;
-    const armLen = 30;
-    const tipX = Math.cos(rad) * armLen;
-    const tipY = Math.sin(rad) * armLen;
-
-    const arrow = document.createElementNS(SVG_NS, "line");
-    arrow.setAttribute("class", "be-arrow");
-    arrow.setAttribute("x1", 0); arrow.setAttribute("y1", 0);
-    arrow.setAttribute("x2", tipX); arrow.setAttribute("y2", tipY);
-    g.appendChild(arrow);
-
-    const tip = document.createElementNS(SVG_NS, "circle");
-    tip.setAttribute("class", "be-tip");
-    tip.setAttribute("r", 5);
-    tip.setAttribute("cx", tipX); tip.setAttribute("cy", tipY);
-    g.appendChild(tip);
-
-    const body = document.createElementNS(SVG_NS, "circle");
-    body.setAttribute("class", "be-body");
-    body.setAttribute("r", 10);
-    g.appendChild(body);
-
-    const label = document.createElementNS(SVG_NS, "text");
-    label.setAttribute("class", "be-label");
-    label.setAttribute("dy", "24");
-    label.textContent = NODE_LABELS[id];
-    g.appendChild(label);
-
-    svg.appendChild(g);
-  }
-
-  // POI
-  if (mmPOI) {
-    const g = document.createElementNS(SVG_NS, "g");
-    g.setAttribute("transform", `translate(${mmPOI.x * MAP_VB_W}, ${mmPOI.y * MAP_VB_H})`);
-    const ring = document.createElementNS(SVG_NS, "circle");
-    ring.setAttribute("class", "be-poi-ring");
-    ring.setAttribute("r", 12);
-    g.appendChild(ring);
-    const dot = document.createElementNS(SVG_NS, "circle");
-    dot.setAttribute("class", "be-poi-dot");
-    dot.setAttribute("r", 5);
-    g.appendChild(dot);
-    svg.appendChild(g);
-  }
-}
-
-function activateSplatBe() {
-  if (splatBeActivated) return;
-  splatBeActivated = true;
-  try { localStorage.setItem(SPLAT_BE_KEY, "1"); } catch {}
-
-  const stage = document.getElementById("splatBeStage");
-  const placeholder = document.getElementById("splatBePlaceholder");
-  const spinner = document.getElementById("splatBeSpinner");
-  const btn = document.getElementById("btnSplatBeToggle");
-  if (!stage) return;
-
-  if (placeholder) placeholder.style.display = "none";
-  if (spinner) spinner.style.display = "";
-  setBeState("loading", "loading");
-  if (btn) btn.textContent = "deactivate";
-
-  // Create iframe only on activate — avoids eager 150MB fetch.
-  let iframe = stage.querySelector("iframe");
-  if (!iframe) {
-    iframe = document.createElement("iframe");
-    iframe.id = "splatBeFrame";
-    iframe.setAttribute("title", "gaussian splat bird's-eye");
-    iframe.setAttribute("allow", "xr-spatial-tracking; fullscreen");
-    iframe.src = SPLAT_BE_URL;
-    stage.insertBefore(iframe, stage.firstChild);
-  } else {
-    iframe.src = SPLAT_BE_URL;
-  }
-}
-
-function deactivateSplatBe() {
-  splatBeActivated = false;
-  splatBeReady = false;
-  try { localStorage.setItem(SPLAT_BE_KEY, "0"); } catch {}
-
-  const stage = document.getElementById("splatBeStage");
-  const placeholder = document.getElementById("splatBePlaceholder");
-  const spinner = document.getElementById("splatBeSpinner");
-  const btn = document.getElementById("btnSplatBeToggle");
-  const ov = document.getElementById("splatBeOverlay");
-
-  if (stage) {
-    const iframe = stage.querySelector("iframe");
-    if (iframe) iframe.remove();
-  }
-  if (ov) ov.innerHTML = "";
-  if (placeholder) placeholder.style.display = "";
-  if (spinner) spinner.style.display = "none";
-  setBeState("dormant", "");
-  if (btn) btn.textContent = "activate";
-}
-
-function onSplatBeReady() {
-  splatBeReady = true;
-  const spinner = document.getElementById("splatBeSpinner");
-  if (spinner) spinner.style.display = "none";
-  setBeState("live", "live");
-  renderBeOverlay();
-}
-
-function wireSplatBeChrome() {
-  const btn = document.getElementById("btnSplatBeToggle");
-  if (btn) {
-    btn.addEventListener("click", () => {
-      if (splatBeActivated) deactivateSplatBe();
-      else activateSplatBe();
-    });
-  }
-
-  window.addEventListener("message", (evt) => {
-    const data = evt && evt.data;
-    if (data && data.type === "enel-splat-ready") onSplatBeReady();
-  });
-
-  setInterval(() => { if (splatBeActivated && splatBeReady) renderBeOverlay(); },
-              STATE_POLL_MS);
-
-  // Auto-activate if the user had it on last session.
-  try {
-    if (localStorage.getItem(SPLAT_BE_KEY) === "1") {
-      requestAnimationFrame(() => activateSplatBe());
-    }
-  } catch {}
-}
-
-wireSplatBeChrome();
-wireGeo();
 
 // ---------------------------------------------------------------------------
 // Browser geolocation — the operator (you) is the anchor. Once we have a fix,
@@ -2391,8 +2226,7 @@ function geoRenderMarkers() {
       label.setAttribute("text-anchor", "middle");
       label.textContent = `air-1 · ${geo.cam1Gps.alt_m != null ? geo.cam1Gps.alt_m.toFixed(0)+"m" : ""}`;
       g.appendChild(label);
-      // Update the stored cam1 position so other overlays (minimap unit arrow,
-      // bird's-eye splat overlay) agree.
+      // Update the stored cam1 position so the minimap unit arrow agrees.
       if (mmState && mmState.cam1) {
         mmState.cam1.x = clamp01(p.x / MAP_VB_W);
         mmState.cam1.y = clamp01(p.y / MAP_VB_H);
@@ -2408,6 +2242,8 @@ function geoOnCam1Gps(gps) {
   geo.cam1Gps = gps;
   geoRenderMarkers();
 }
+
+wireGeo();
 
 // Run the cold-boot intro, then reveal the dashboard. Skippable.
 runBootIntro().then(() => start());

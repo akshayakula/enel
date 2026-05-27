@@ -1,4 +1,5 @@
-const STREAM_IDS = ["cam1", "cam2", "cam3", "cam4"];
+const PHONE_STREAM_IDS = ["cam3", "cam4"];
+const STREAM_LABELS = { cam3: "gnd-2", cam4: "gnd-3" };
 const streamButtons = document.getElementById("streamButtons");
 const activeStream = document.getElementById("activeStream");
 const publishStatus = document.getElementById("publishStatus");
@@ -23,7 +24,7 @@ function setCameraStatus(text, className = "") {
 }
 
 function setActiveStream(streamId) {
-  activeStream.textContent = streamId || "none";
+  activeStream.textContent = streamId ? `${STREAM_LABELS[streamId] || streamId} (${streamId})` : "none";
 }
 
 async function ensureCamera() {
@@ -66,20 +67,21 @@ async function cleanupSession() {
 }
 
 async function publishToStream(streamId) {
-  if (!STREAM_IDS.includes(streamId)) {
+  if (!PHONE_STREAM_IDS.includes(streamId)) {
     return;
   }
 
   await cleanupSession();
 
   currentStreamId = streamId;
+  const label = STREAM_LABELS[streamId] || streamId;
   setActiveStream(streamId);
-  setPublishStatus(`Preparing ${streamId}`);
+  setPublishStatus(`Preparing ${label}`);
   stopButton.disabled = false;
 
   try {
     const stream = await ensureCamera();
-    setPublishStatus(`Publishing ${streamId}`);
+    setPublishStatus(`Publishing ${label}`);
 
     publisher = new MediaMTXWebRTCPublisher({
       url: `${window.location.origin}/whip/${streamId}`,
@@ -90,7 +92,7 @@ async function publishToStream(streamId) {
       audioBitrate: 32,
       audioVoice: false,
       onConnected: () => {
-        setPublishStatus(`Live on ${streamId}`);
+        setPublishStatus(`Live on ${label}`);
         setCameraStatus("Publishing video only", "live");
       },
       onError: (err) => {
@@ -108,10 +110,11 @@ async function publishToStream(streamId) {
 }
 
 function renderButtons() {
-  for (const streamId of STREAM_IDS) {
+  for (const streamId of PHONE_STREAM_IDS) {
     const button = document.createElement("button");
     button.className = "button mono";
-    button.textContent = streamId;
+    button.textContent = STREAM_LABELS[streamId] || streamId;
+    button.title = streamId;
     button.addEventListener("click", () => {
       publishToStream(streamId).catch((error) => {
         console.error(error);
@@ -132,8 +135,8 @@ window.addEventListener("pagehide", () => {
 });
 
 async function claimNextSlot() {
-  setPublishStatus("Finding free slot");
-  const response = await fetch("/api/next-slot", { cache: "no-store" });
+  setPublishStatus("Finding free ground phone slot");
+  const response = await fetch("/api/next-slot?role=phone", { cache: "no-store" });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.error || `next-slot ${response.status}`);
@@ -160,7 +163,7 @@ async function publishAuto({ retry = true } = {}) {
 
 const autoButton = document.createElement("button");
 autoButton.className = "button mono";
-autoButton.textContent = "auto";
+autoButton.textContent = "auto gnd";
 autoButton.addEventListener("click", () => {
   publishAuto().catch((error) => {
     console.error(error);
@@ -170,7 +173,7 @@ streamButtons.appendChild(autoButton);
 
 renderButtons();
 
-if (STREAM_IDS.includes(requestedStreamId)) {
+if (PHONE_STREAM_IDS.includes(requestedStreamId)) {
   publishToStream(requestedStreamId).catch((error) => {
     console.error(error);
   });

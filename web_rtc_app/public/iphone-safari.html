@@ -12,8 +12,8 @@
         <div>
           <h1>Phone Camera Publisher</h1>
           <p>
-            Video-only phone publisher for the same cam1-cam4 slots as the Pis.
-            The viewer records every live slot from MediaMTX for Lambda mapping.
+            Video-only phone publisher for ground slots gnd-2 and gnd-3.
+            air-1 is reserved for the drone.
           </p>
         </div>
         <div class="pill mono" id="publishStatus">Idle</div>
@@ -29,6 +29,7 @@
           <ul class="meta-list">
             <li>This app requests camera access only. Audio is explicitly disabled.</li>
             <li>Use Safari on iPhone or Chrome on Android over HTTPS for camera capture.</li>
+            <li>Auto pairing only claims gnd-2 or gnd-3.</li>
             <li>When you are done, tap Stop so the publisher session is torn down cleanly.</li>
           </ul>
           <div class="controls">
