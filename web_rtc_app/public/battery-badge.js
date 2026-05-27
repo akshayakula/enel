@@ -28,7 +28,7 @@
         const pct = Math.round(d.pct);
         const lvl = pct > 50 ? "ok" : pct >= 20 ? "warn" : "low";
         b.className = `batt-badge mono batt-${lvl}`;
-        b.textContent = `${d.charging ? "⚡" : "🔋"} ${pct}%`;
+        b.textContent = `${d.charging ? "CHG" : "BAT"} ${pct}%`;
         b.title = `${(d.voltage || 0).toFixed(2)}V · ${d.charging ? "charging" : "discharging"}`;
         b.style.display = "";
       } else {

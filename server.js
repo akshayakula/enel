@@ -87,11 +87,19 @@ app.get("/health", (_req, res) => {
 // Battery telemetry is pushed by each Pi and rendered as a badge on cam tiles.
 const batteryStore = new Map(); // cam -> { voltage, pct, charging, ts }
 const BATTERY_STALE_MS = 30000;
+const BATTERY_ALIASES = {
+  gnd1: "cam1",
+  "gnd-1": "cam1",
+  air1: "cam1",
+  "air-1": "cam1",
+};
+const normalizeBatteryCam = (cam) => BATTERY_ALIASES[String(cam || "").toLowerCase()] || cam;
 
 app.post("/api/battery/:cam", (req, res) => {
+  const cam = normalizeBatteryCam(req.params.cam);
   const { voltage, pct, charging } = req.body || {};
   if (typeof pct !== "number") return res.status(400).json({ error: "pct (number) required" });
-  batteryStore.set(req.params.cam, {
+  batteryStore.set(cam, {
     voltage: typeof voltage === "number" ? voltage : null,
     pct: Math.max(0, Math.min(100, pct)),
     charging: !!charging,
@@ -101,7 +109,7 @@ app.post("/api/battery/:cam", (req, res) => {
 });
 
 app.get("/api/battery/:cam", (req, res) => {
-  const d = batteryStore.get(req.params.cam);
+  const d = batteryStore.get(normalizeBatteryCam(req.params.cam));
   if (!d) return res.json({ pct: null, stale: true });
   const ageMs = Date.now() - d.ts;
   res.json({ voltage: d.voltage, pct: d.pct, charging: d.charging, ageMs, stale: ageMs > BATTERY_STALE_MS });

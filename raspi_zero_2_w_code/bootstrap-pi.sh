@@ -34,6 +34,8 @@ scp -o StrictHostKeyChecking=accept-new \
     "$SCRIPT_DIR/streamer.conf.example" \
     "$SCRIPT_DIR/pi_control.py" \
     "$SCRIPT_DIR/pi-control.service" \
+    "$SCRIPT_DIR/batt-telemetry.py" \
+    "$SCRIPT_DIR/batt-telemetry.service" \
     "$SCRIPT_DIR/ring.py" \
     "$SCRIPT_DIR/wifi-j-autojoin.sh" \
     "$SCRIPT_DIR/wifi-j-autojoin.service" \
@@ -50,7 +52,7 @@ set -euo pipefail
 echo "--- apt packages"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    rpicam-apps libcamera-apps curl xz-utils ca-certificates
+    rpicam-apps libcamera-apps curl xz-utils ca-certificates python3-smbus
 
 if ! /usr/local/bin/ffmpeg -hide_banner -muxers 2>/dev/null | grep -q '\\brtsp\\b'; then
   echo "--- downloading static ffmpeg"
@@ -75,6 +77,8 @@ sudo install -m 0644 /tmp/streamer.service /etc/systemd/system/streamer.service
 echo "--- installing Pi control helpers"
 sudo install -m 0755 /tmp/pi_control.py /usr/local/bin/pi_control.py
 sudo install -m 0644 /tmp/pi-control.service /etc/systemd/system/pi-control.service
+sudo install -m 0755 /tmp/batt-telemetry.py /usr/local/bin/batt-telemetry.py
+sudo install -m 0644 /tmp/batt-telemetry.service /etc/systemd/system/batt-telemetry.service
 sudo install -m 0755 /tmp/ring.py /usr/local/bin/ring.py
 
 echo "--- installing Wi-Fi auto-join helpers"
@@ -96,6 +100,8 @@ sudo systemctl enable --now wifi-j-autojoin.timer
 sudo systemctl enable --now captive-accept.timer
 sudo systemctl enable pi-control.service
 sudo systemctl restart pi-control.service
+sudo systemctl enable batt-telemetry.service
+sudo systemctl restart batt-telemetry.service
 sudo systemctl enable streamer.service
 sudo systemctl restart streamer.service
 sleep 2

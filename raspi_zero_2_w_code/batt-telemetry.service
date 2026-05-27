@@ -1,0 +1,16 @@
+[Unit]
+Description=enel battery telemetry pusher (INA219 -> dashboards)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=BATT_INTERVAL=5
+ExecStart=/usr/local/bin/batt-telemetry.py
+Restart=on-failure
+RestartSec=5
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
