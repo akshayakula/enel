@@ -10,6 +10,7 @@ const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const Busboy = require("busboy");
 const AdmZip = require("adm-zip");
+const { WebSocketServer } = require("ws");
 
 // Load .env at startup (no dotenv dep needed — tiny parser).
 (() => {
@@ -1347,15 +1348,48 @@ app.get("/phone", (req, res) => {
   res.redirect(302, `/iphone-safari${query}`);
 });
 
-// MAVLink bridge WS proxy — only cam1 is the airborne unit. Browser connects
-// to wss://<host>/api/pi/cam1/mavlink and we forward to ws://pi-cam1.local:8090.
-const mavlinkProxy = createProxyMiddleware({
-  target: "http://pi-cam1.local:8090",
-  changeOrigin: true,
-  ws: true,
-  pathRewrite: { "^/api/pi/cam1/mavlink": "" },
-});
-app.use("/api/pi/cam1/mavlink", mavlinkProxy);
+// MAVLink relay — the air-unit Pi is behind NAT, so it CONNECTS OUT to us at
+// /api/pi/<cam>/mavlink/uplink and pushes telemetry; browsers connect to
+// /api/pi/<cam>/mavlink to read telemetry + send arm/yaw. We relay between the
+// two. Works identically on LAN and Fly (no inbound reach to the Pi needed).
+const mavUplinks = new Map(); // cam -> ws (the Pi)
+const mavClients = new Map(); // cam -> Set<ws> (browsers)
+const mavWss = new WebSocketServer({ noServer: true });
+
+function mavRegisterUplink(cam, ws) {
+  const prev = mavUplinks.get(cam);
+  if (prev && prev !== ws) { try { prev.close(); } catch {} }
+  mavUplinks.set(cam, ws);
+  console.log(`[mav] uplink connected: ${cam}`);
+  ws.on("message", (data) => {
+    const set = mavClients.get(cam);
+    if (!set) return;
+    const text = data.toString();
+    for (const c of set) { if (c.readyState === 1) { try { c.send(text); } catch {} } }
+  });
+  const drop = () => {
+    if (mavUplinks.get(cam) === ws) mavUplinks.delete(cam);
+    console.log(`[mav] uplink closed: ${cam}`);
+  };
+  ws.on("close", drop);
+  ws.on("error", drop);
+}
+
+function mavRegisterClient(cam, ws) {
+  let set = mavClients.get(cam);
+  if (!set) { set = new Set(); mavClients.set(cam, set); }
+  set.add(ws);
+  if (!mavUplinks.has(cam)) {
+    try { ws.send(JSON.stringify({ type: "status", link: "down", msg: "air unit offline" })); } catch {}
+  }
+  ws.on("message", (data) => {
+    const up = mavUplinks.get(cam);
+    if (up && up.readyState === 1) { try { up.send(data.toString()); } catch {} }
+  });
+  const drop = () => { set.delete(ws); };
+  ws.on("close", drop);
+  ws.on("error", drop);
+}
 
 app.use(
   "/mediamtx",
@@ -1437,10 +1471,16 @@ const dashboardServer = USE_HTTPS
     }, app)
   : http.createServer(app);
 
+const MAV_RE = /^\/api\/pi\/([a-z0-9-]+)\/mavlink(\/uplink)?(?:\?.*)?$/i;
 dashboardServer.on("upgrade", (req, socket, head) => {
-  if (req.url && req.url.startsWith("/api/pi/cam1/mavlink")) {
-    mavlinkProxy.upgrade(req, socket, head);
-  }
+  const m = req.url && req.url.match(MAV_RE);
+  if (!m) { socket.destroy(); return; }
+  const cam = m[1].toLowerCase();
+  const isUplink = Boolean(m[2]);
+  mavWss.handleUpgrade(req, socket, head, (ws) => {
+    if (isUplink) mavRegisterUplink(cam, ws);
+    else mavRegisterClient(cam, ws);
+  });
 });
 
 dashboardServer.listen(PORT, "0.0.0.0", () => {

@@ -41,6 +41,10 @@ import websockets
 SERIAL_DEV    = os.environ.get("MAV_DEV",  "/dev/ttyAMA0")
 SERIAL_BAUD   = int(os.environ.get("MAV_BAUD", "921600"))
 WS_PORT       = int(os.environ.get("MAV_WS_PORT", "8090"))
+# Fly uplink: the Pi is behind NAT, so it CONNECTS OUT to the server and pushes
+# telemetry / receives arm+yaw commands. Set MAV_UPLINK_URL="" to disable.
+UPLINK_URL    = os.environ.get("MAV_UPLINK_URL",
+                               "wss://enel-stream.fly.dev/api/pi/cam1/mavlink/uplink")
 
 RC_SEND_HZ    = 20        # RC_CHANNELS_OVERRIDE send rate
 TELE_HZ       = 5         # telemetry push rate to all WS clients
@@ -160,22 +164,48 @@ def send_arm(mav: mavutil.mavfile, on: bool) -> None:
     )
 
 
+def build_tele() -> dict:
+    s = _snap()
+    hb_fresh = (time.monotonic() - s["hb_ts"]) < HB_FRESH_S
+    return {
+        "type":  "tele",
+        "hb":    {"fresh": hb_fresh, "mode": s["mode"]},
+        "armed": bool(s["armed"]),
+        "gps":   s["gps"],
+        "att":   s["att"],
+        "batt":  s["batt"],
+    }
+
+
+def apply_command(mav: mavutil.mavfile, msg: dict):
+    """Apply a yaw/arm command from any client; return an optional reply dict."""
+    t = msg.get("type")
+    if t == "yaw":
+        try:
+            pwm = int(msg.get("pwm", 1500))
+        except (TypeError, ValueError):
+            return None
+        _set(yaw_pwm=max(1000, min(2000, pwm)), yaw_ts=time.monotonic())
+        return None
+    if t == "arm":
+        on = bool(msg.get("on"))
+        # Require fresh heartbeat to allow ARM. DISARM always allowed.
+        if on and (time.monotonic() - _snap()["hb_ts"] > HB_FRESH_S):
+            return {"type": "err", "msg": "no heartbeat; arm refused"}
+        try:
+            send_arm(mav, on)
+            return {"type": "ack", "action": "arm" if on else "disarm"}
+        except Exception as e:
+            return {"type": "err", "msg": str(e)}
+    return None
+
+
 # ---------- WebSocket server -------------------------------------------------
 async def tele_pusher(ws) -> None:
     period = 1.0 / TELE_HZ
     try:
         while True:
-            s = _snap()
-            hb_fresh = (time.monotonic() - s["hb_ts"]) < HB_FRESH_S
-            payload = {
-                "type":  "tele",
-                "hb":    {"fresh": hb_fresh, "mode": s["mode"]},
-                "armed": bool(s["armed"]),
-                "gps":   s["gps"],
-                "att":   s["att"],
-                "batt":  s["batt"],
-            }
-            await ws.send(json.dumps(payload))
+            await ws.send(json.dumps(build_tele()))
             await asyncio.sleep(period)
     except websockets.exceptions.ConnectionClosed:
         return
@@ -190,25 +220,12 @@ def make_handler(mav: mavutil.mavfile):
                     msg = json.loads(raw)
                 except Exception:
                     continue
-                t = msg.get("type")
-                if t == "yaw":
+                resp = apply_command(mav, msg)
+                if resp:
                     try:
-                        pwm = int(msg.get("pwm", 1500))
-                    except (TypeError, ValueError):
-                        continue
-                    pwm = max(1000, min(2000, pwm))
-                    _set(yaw_pwm=pwm, yaw_ts=time.monotonic())
-                elif t == "arm":
-                    on = bool(msg.get("on"))
-                    # Require fresh heartbeat to allow ARM. DISARM always allowed.
-                    if on and (time.monotonic() - _snap()["hb_ts"] > HB_FRESH_S):
-                        await ws.send(json.dumps({"type": "err", "msg": "no heartbeat; arm refused"}))
-                        continue
-                    try:
-                        send_arm(mav, on)
-                        await ws.send(json.dumps({"type": "ack", "action": "arm" if on else "disarm"}))
-                    except Exception as e:
-                        await ws.send(json.dumps({"type": "err", "msg": str(e)}))
+                        await ws.send(json.dumps(resp))
+                    except Exception:
+                        pass
         finally:
             push.cancel()
     return handler
@@ -218,6 +235,47 @@ async def serve(mav: mavutil.mavfile) -> None:
     async with websockets.serve(make_handler(mav), "0.0.0.0", WS_PORT,
                                 ping_interval=10, ping_timeout=10):
         await asyncio.Future()  # run forever
+
+
+async def uplink(mav: mavutil.mavfile) -> None:
+    """Outbound link to the Fly dashboard: push telemetry, receive arm/yaw.
+    The Pi is behind NAT, so it dials OUT and keeps reconnecting."""
+    if not UPLINK_URL:
+        return
+    while True:
+        try:
+            async with websockets.connect(UPLINK_URL, ping_interval=10,
+                                          ping_timeout=10, open_timeout=10) as ws:
+                print(f"[mavlink_bridge] uplink connected -> {UPLINK_URL}", flush=True)
+
+                async def pusher():
+                    period = 1.0 / TELE_HZ
+                    while True:
+                        await ws.send(json.dumps(build_tele()))
+                        await asyncio.sleep(period)
+
+                push = asyncio.create_task(pusher())
+                try:
+                    async for raw in ws:
+                        try:
+                            msg = json.loads(raw)
+                        except Exception:
+                            continue
+                        resp = apply_command(mav, msg)
+                        if resp:
+                            try:
+                                await ws.send(json.dumps(resp))
+                            except Exception:
+                                pass
+                finally:
+                    push.cancel()
+        except Exception as e:
+            print(f"[mavlink_bridge] uplink down ({e}); retry in 5s", flush=True)
+        await asyncio.sleep(5)
+
+
+async def run_all(mav: mavutil.mavfile) -> None:
+    await asyncio.gather(serve(mav), uplink(mav))
 
 
 def main() -> None:
@@ -235,7 +293,7 @@ def main() -> None:
     signal.signal(signal.SIGINT,  _exit)
 
     try:
-        asyncio.run(serve(mav))
+        asyncio.run(run_all(mav))
     finally:
         stop.set()
 
