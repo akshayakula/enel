@@ -13,12 +13,20 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 PORT = 8088
 OVERRIDE_PATH = "/run/ring-override.json"
 MAX_TTL_SECONDS = 3600
+CONF_PATH = "/boot/firmware/streamer.conf"
+COMMAND_STATE_PATH = "/var/lib/enel/command-state.json"
+COMMAND_POLL_SECONDS = 1.5
+DEFAULT_REMOTE_DASHBOARD = "https://enel-stream.fly.dev"
 
 
 def _systemctl_active(unit: str) -> bool:
@@ -63,6 +71,154 @@ def _clear_override() -> None:
         os.remove(OVERRIDE_PATH)
     except FileNotFoundError:
         pass
+
+
+def _read_streamer_conf() -> dict[str, str]:
+    values: dict[str, str] = {}
+    try:
+        with open(CONF_PATH) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return values
+
+
+def _dashboard_urls(conf: dict[str, str]) -> list[str]:
+    urls: list[str] = []
+    raw = conf.get("COMMAND_SERVERS") or conf.get("DASHBOARD_URLS") or ""
+    for part in raw.replace(",", " ").split():
+        if part:
+            urls.append(part.rstrip("/"))
+
+    host = conf.get("SERVER_HOST", "")
+    if host:
+        if host.endswith(".fly.dev"):
+            urls.append(f"https://{host}".rstrip("/"))
+        elif "." in host:
+            urls.append(f"http://{host}:3605".rstrip("/"))
+
+    urls.append(DEFAULT_REMOTE_DASHBOARD)
+
+    out: list[str] = []
+    seen = set()
+    for url in urls:
+        if not url.startswith(("http://", "https://")):
+            url = f"https://{url}"
+        url = url.rstrip("/")
+        if url not in seen:
+            seen.add(url)
+            out.append(url)
+    return out
+
+
+def _read_command_state() -> dict:
+    try:
+        with open(COMMAND_STATE_PATH) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_command_state(state: dict) -> None:
+    path = Path(COMMAND_STATE_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, path)
+
+
+def _apply_ring_command(cmd: str, args: dict) -> bool:
+    if cmd == "identify":
+        _write_override({
+            "mode":       "identify",
+            "expires_at": time.time() + _clamp_ttl(args.get("ttl", 5), default=5),
+        })
+        return True
+
+    if cmd == "color":
+        _write_override({
+            "mode":       "solid",
+            "r":          _clamp_byte(args.get("r")),
+            "g":          _clamp_byte(args.get("g")),
+            "b":          _clamp_byte(args.get("b")),
+            "expires_at": time.time() + _clamp_ttl(args.get("ttl", 60)),
+        })
+        return True
+
+    if cmd == "compass":
+        try:
+            bearing = float(args.get("bearing_deg", 0.0)) % 360.0
+        except (TypeError, ValueError):
+            bearing = 0.0
+        try:
+            width = int(args.get("width", 3))
+        except (TypeError, ValueError):
+            width = 3
+        payload = {
+            "mode":         "compass",
+            "bearing_deg":  bearing,
+            "width":        max(1, min(16, width)),
+            "r":            _clamp_byte(args.get("r", 0)),
+            "g":            _clamp_byte(args.get("g", 0)),
+            "b":            _clamp_byte(args.get("b", 0)),
+            "expires_at":   time.time() + _clamp_ttl(args.get("ttl", 300)),
+        }
+        if "count" in args:
+            try:
+                c = int(args.get("count"))
+            except (TypeError, ValueError):
+                c = 3
+            payload["count"] = max(1, min(16, c))
+        if args.get("on_target"):
+            payload["on_target"] = True
+        _write_override(payload)
+        return True
+
+    if cmd == "clear":
+        _clear_override()
+        return True
+
+    return False
+
+
+def _command_poller() -> None:
+    conf = _read_streamer_conf()
+    stream_id = conf.get("STREAM_ID", "")
+    if not stream_id:
+        return
+
+    state = _read_command_state()
+    state_key = f"last_ts:{stream_id}"
+    last_ts = float(state.get(state_key, 0) or 0)
+    urls = _dashboard_urls(conf)
+
+    while True:
+        for base_url in urls:
+            try:
+                req = Request(f"{base_url}/api/command/{stream_id}", headers={"accept": "application/json"})
+                with urlopen(req, timeout=5) as res:
+                    payload = json.load(res)
+            except (OSError, URLError, TimeoutError, ValueError):
+                continue
+
+            ts = float(payload.get("ts", 0) or 0)
+            cmd = payload.get("cmd")
+            args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+            if not cmd or ts <= last_ts:
+                continue
+
+            last_ts = ts
+            state[state_key] = last_ts
+            _write_command_state(state)
+            if _apply_ring_command(str(cmd), args):
+                print(f"command-poller: applied {cmd} from {base_url}", flush=True)
+        time.sleep(COMMAND_POLL_SECONDS)
 
 
 def _current_override() -> dict | None:
@@ -210,6 +366,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    threading.Thread(target=_command_poller, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 

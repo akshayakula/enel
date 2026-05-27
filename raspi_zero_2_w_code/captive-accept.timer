@@ -1,0 +1,10 @@
+[Unit]
+Description=enel: periodic captive portal recheck
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=2min
+Unit=captive-accept.service
+
+[Install]
+WantedBy=timers.target

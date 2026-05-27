@@ -5,7 +5,7 @@
 #   ./provision-sd.sh <stream-id> <server-host> [pi-name] [bootfs-path]
 #
 # Examples:
-#   ./provision-sd.sh cam1 192.168.1.248 pi-cam1
+#   ./provision-sd.sh cam1 192.168.1.248 pi-cam-1
 #   ./provision-sd.sh cam3 laptop.local  pi-livingroom /Volumes/bootfs
 #
 # After this, eject the SD card and boot the Pi. On first boot the streamer
@@ -42,6 +42,7 @@ PI_NAME=$PI_NAME
 STREAM_ID=$STREAM_ID
 
 SERVER_HOST=$SERVER_HOST
+COMMAND_SERVERS=https://enel-stream.fly.dev http://$SERVER_HOST:3605
 WHIP_PORT=8889
 
 WIDTH=1280

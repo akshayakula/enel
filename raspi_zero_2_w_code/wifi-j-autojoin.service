@@ -1,5 +1,5 @@
 [Unit]
-Description=enel: auto-join open Wi-Fi starting with J
+Description=enel: auto-join operator hotspot or open J Wi-Fi
 After=NetworkManager.service
 Wants=NetworkManager.service
 

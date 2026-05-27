@@ -755,6 +755,16 @@ async function sendCommand(streamId, cmd, args, btn) {
 }
 
 async function piPost(streamId, sub, body, btn) {
+  const ringCommand = {
+    "ring/identify": "identify",
+    "ring/color": "color",
+    "ring/compass": "compass",
+    "ring/clear": "clear",
+  }[sub];
+  if (ringCommand) {
+    return sendCommand(streamId, ringCommand, body, btn);
+  }
+
   const prev = btn && btn.textContent;
   if (btn && btn.tagName === "BUTTON") btn.disabled = true;
   try {
@@ -788,7 +798,7 @@ function attachReader(streamId, baseUrl, ui, container) {
     },
     onError: (err) => {
       ui.video.srcObject = null;
-      ui.status.textContent = "sim";
+      ui.status.textContent = "offline";
       ui.status.className = "cam-status mono offline";
       container.dataset.state = "offline";
       ui.noSig.style.display = "";

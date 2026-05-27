@@ -58,11 +58,68 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, protocol: "https" });
 });
 
+// --- Battery telemetry (pushed by each Pi, shown as a badge on the cam tile) -
+const batteryStore = new Map(); // cam -> { voltage, pct, charging, ts }
+const BATTERY_STALE_MS = 30000;
+
+app.post("/api/battery/:cam", (req, res) => {
+  const { voltage, pct, charging } = req.body || {};
+  if (typeof pct !== "number") return res.status(400).json({ error: "pct (number) required" });
+  batteryStore.set(req.params.cam, {
+    voltage: typeof voltage === "number" ? voltage : null,
+    pct: Math.max(0, Math.min(100, pct)),
+    charging: !!charging,
+    ts: Date.now(),
+  });
+  res.json({ ok: true });
+});
+
+app.get("/api/battery/:cam", (req, res) => {
+  const d = batteryStore.get(req.params.cam);
+  if (!d) return res.json({ pct: null, stale: true });
+  const ageMs = Date.now() - d.ts;
+  res.json({ voltage: d.voltage, pct: d.pct, charging: d.charging, ageMs, stale: ageMs > BATTERY_STALE_MS });
+});
+
+// --- Publish-mode control: the UI sets a desired mode (both|lan|server); each
+// Pi polls every server it can reach and applies the newest-written mode. -----
+const PUBLISH_MODES = new Set(["both", "lan", "server"]);
+const controlStore = new Map(); // cam -> { mode, ts }
+
+app.get("/api/control/:cam", (req, res) => {
+  const d = controlStore.get(req.params.cam);
+  if (!d) return res.json({ mode: "both", ts: 0 });
+  res.json({ mode: d.mode, ts: d.ts });
+});
+
+app.post("/api/control/:cam", (req, res) => {
+  const mode = String((req.body && req.body.mode) || "").toLowerCase();
+  if (!PUBLISH_MODES.has(mode)) return res.status(400).json({ error: "mode must be both|lan|server" });
+  controlStore.set(req.params.cam, { mode, ts: Date.now() });
+  res.json({ ok: true, mode });
+});
+
+// --- One-shot commands (e.g. ring identify): UI posts, Pi polls + executes. ---
+const commandStore = new Map(); // cam -> { cmd, args, ts }
+
+app.post("/api/command/:cam", (req, res) => {
+  const cmd = String((req.body && req.body.cmd) || "");
+  if (!cmd) return res.status(400).json({ error: "cmd required" });
+  commandStore.set(req.params.cam, { cmd, args: (req.body && req.body.args) || {}, ts: Date.now() });
+  res.json({ ok: true });
+});
+
+app.get("/api/command/:cam", (req, res) => {
+  const d = commandStore.get(req.params.cam);
+  if (!d) return res.json({ cmd: null, ts: 0 });
+  res.json(d);
+});
+
 const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
 
 const PI_CONTROL_PORT = 8088;
 const PI_CONTROL_TIMEOUT_MS = 3000;
-const piHostForSlot = (slot) => `pi-${slot}.local`;
+const piHostForSlot = (slot) => slot.replace(/^cam(\d+)$/, "pi-cam-$1.local");
 
 app.get("/api/state", async (_req, res) => {
   try {
@@ -92,7 +149,7 @@ app.get("/api/state", async (_req, res) => {
 });
 
 // Proxy a narrow set of pi-control endpoints per cam id.
-// Example: POST /api/pi/cam1/ring/identify  -> http://pi-cam1.local:8088/ring/identify
+// Example: POST /api/pi/cam1/ring/identify  -> http://pi-cam-1.local:8088/ring/identify
 app.all("/api/pi/:id/:path(*)", async (req, res) => {
   const { id, path: subPath } = req.params;
   if (!STREAM_SLOTS.includes(id)) {
@@ -794,10 +851,10 @@ app.get("/phone-publish", (req, res) => {
   res.redirect(302, `/iphone-safari${query}`);
 });
 
-// MAVLink bridge WS proxy — only cam1 is the airborne unit. Browser connects
-// to wss://<host>/api/pi/cam1/mavlink and we forward to ws://pi-cam1.local:8090.
+// MAVLink bridge WS proxy - only cam1 is the airborne unit. Browser connects
+// to wss://<host>/api/pi/cam1/mavlink and we forward to ws://pi-cam-1.local:8090.
 const mavlinkProxy = createProxyMiddleware({
-  target: "http://pi-cam1.local:8090",
+  target: "http://pi-cam-1.local:8090",
   changeOrigin: true,
   ws: true,
   pathRewrite: { "^/api/pi/cam1/mavlink": "" },
@@ -871,34 +928,48 @@ app.get("/", (_req, res) => {
   res.redirect("/viewer");
 });
 
-if (!fs.existsSync(CERT_PATH) || !fs.existsSync(KEY_PATH)) {
-  console.error("Missing TLS certificate files.");
-  console.error("Run: ./scripts/generate-dev-cert.sh");
-  process.exit(1);
+function attachUpgrade(server) {
+  server.on("upgrade", (req, socket, head) => {
+    if (req.url && req.url.startsWith("/api/pi/cam1/mavlink")) {
+      mavlinkProxy.upgrade(req, socket, head);
+    }
+  });
 }
 
-const credentials = {
-  cert: fs.readFileSync(CERT_PATH),
-  key: fs.readFileSync(KEY_PATH),
-};
-
-const httpsServer = https.createServer(credentials, app);
-httpsServer.on("upgrade", (req, socket, head) => {
-  if (req.url && req.url.startsWith("/api/pi/cam1/mavlink")) {
-    mavlinkProxy.upgrade(req, socket, head);
-  }
-});
-httpsServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Dashboard listening on https://0.0.0.0:${PORT}`);
-});
-
-http
-  .createServer((req, res) => {
-    const host = (req.headers.host || "").replace(/:\d+$/, "");
-    const location = `https://${host}:${PORT}${req.url || "/"}`;
-    res.writeHead(308, { Location: location });
-    res.end();
-  })
-  .listen(HTTP_REDIRECT_PORT, "0.0.0.0", () => {
-    console.log(`HTTP redirect listening on http://0.0.0.0:${HTTP_REDIRECT_PORT}`);
+if (process.env.HTTP_ONLY === "1") {
+  // Behind a TLS-terminating proxy (e.g. Fly.io). Serve plain HTTP; the proxy
+  // handles certs on :443. No self-signed cert or redirect server needed.
+  const httpServer = http.createServer(app);
+  attachUpgrade(httpServer);
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`Dashboard (HTTP, behind TLS proxy) listening on http://0.0.0.0:${PORT}`);
   });
+} else {
+  if (!fs.existsSync(CERT_PATH) || !fs.existsSync(KEY_PATH)) {
+    console.error("Missing TLS certificate files.");
+    console.error("Run: ./scripts/generate-dev-cert.sh");
+    process.exit(1);
+  }
+
+  const credentials = {
+    cert: fs.readFileSync(CERT_PATH),
+    key: fs.readFileSync(KEY_PATH),
+  };
+
+  const httpsServer = https.createServer(credentials, app);
+  attachUpgrade(httpsServer);
+  httpsServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`Dashboard listening on https://0.0.0.0:${PORT}`);
+  });
+
+  http
+    .createServer((req, res) => {
+      const host = (req.headers.host || "").replace(/:\d+$/, "");
+      const location = `https://${host}:${PORT}${req.url || "/"}`;
+      res.writeHead(308, { Location: location });
+      res.end();
+    })
+    .listen(HTTP_REDIRECT_PORT, "0.0.0.0", () => {
+      console.log(`HTTP redirect listening on http://0.0.0.0:${HTTP_REDIRECT_PORT}`);
+    });
+}

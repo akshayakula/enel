@@ -1,5 +1,5 @@
 [Unit]
-Description=enel: periodic Wi-Fi 'J' scan
+Description=enel: periodic hotspot/J Wi-Fi scan
 
 [Timer]
 OnBootSec=45s

@@ -32,6 +32,15 @@ scp -o StrictHostKeyChecking=accept-new \
     "$SCRIPT_DIR/streamer.sh" \
     "$SCRIPT_DIR/streamer.service" \
     "$SCRIPT_DIR/streamer.conf.example" \
+    "$SCRIPT_DIR/pi_control.py" \
+    "$SCRIPT_DIR/pi-control.service" \
+    "$SCRIPT_DIR/ring.py" \
+    "$SCRIPT_DIR/wifi-j-autojoin.sh" \
+    "$SCRIPT_DIR/wifi-j-autojoin.service" \
+    "$SCRIPT_DIR/wifi-j-autojoin.timer" \
+    "$SCRIPT_DIR/captive-accept.sh" \
+    "$SCRIPT_DIR/captive-accept.service" \
+    "$SCRIPT_DIR/captive-accept.timer" \
     "${SSH_USER}@${PI_HOST}:/tmp/"
 
 echo "==> installing on Pi (this will prompt for sudo password)"
@@ -63,6 +72,19 @@ sudo install -m 0755 /tmp/streamer.sh /usr/local/bin/streamer.sh
 echo "--- installing streamer.service"
 sudo install -m 0644 /tmp/streamer.service /etc/systemd/system/streamer.service
 
+echo "--- installing Pi control helpers"
+sudo install -m 0755 /tmp/pi_control.py /usr/local/bin/pi_control.py
+sudo install -m 0644 /tmp/pi-control.service /etc/systemd/system/pi-control.service
+sudo install -m 0755 /tmp/ring.py /usr/local/bin/ring.py
+
+echo "--- installing Wi-Fi auto-join helpers"
+sudo install -m 0755 /tmp/wifi-j-autojoin.sh /usr/local/bin/wifi-j-autojoin.sh
+sudo install -m 0644 /tmp/wifi-j-autojoin.service /etc/systemd/system/wifi-j-autojoin.service
+sudo install -m 0644 /tmp/wifi-j-autojoin.timer /etc/systemd/system/wifi-j-autojoin.timer
+sudo install -m 0755 /tmp/captive-accept.sh /usr/local/bin/captive-accept.sh
+sudo install -m 0644 /tmp/captive-accept.service /etc/systemd/system/captive-accept.service
+sudo install -m 0644 /tmp/captive-accept.timer /etc/systemd/system/captive-accept.timer
+
 if [[ ! -f /boot/firmware/streamer.conf ]]; then
   echo "--- WARNING: /boot/firmware/streamer.conf missing; copying example (you must edit it)"
   sudo install -m 0644 /tmp/streamer.conf.example /boot/firmware/streamer.conf
@@ -70,6 +92,10 @@ fi
 
 echo "--- enabling + starting streamer.service"
 sudo systemctl daemon-reload
+sudo systemctl enable --now wifi-j-autojoin.timer
+sudo systemctl enable --now captive-accept.timer
+sudo systemctl enable pi-control.service
+sudo systemctl restart pi-control.service
 sudo systemctl enable streamer.service
 sudo systemctl restart streamer.service
 sleep 2

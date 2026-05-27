@@ -1,0 +1,55 @@
+# Fly.io deploy for the enel streaming server.
+# Dashboard on :443 (TLS by Fly), RTSP ingest on :8554, WebRTC ICE-TCP on :8189.
+app = "enel-stream"
+primary_region = "iad"
+
+[build]
+
+[env]
+  HTTP_ONLY = "1"
+  PORT = "8080"
+  # Public dedicated IPv4 for WebRTC ICE candidates (from `fly ips allocate-v4`).
+  MTX_WEBRTCADDITIONALHOSTS = "137.66.49.231"
+
+[[mounts]]
+  source = "data"
+  destination = "/data"
+
+# Dashboard (Node) — Fly terminates TLS on :443, forwards plain HTTP to :8080.
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+# RTSP ingest — raw TCP passthrough (the Pi publishes here).
+[[services]]
+  protocol = "tcp"
+  internal_port = 8554
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  [[services.ports]]
+    port = 8554
+
+# WebRTC ICE over TCP — raw TCP passthrough.
+[[services]]
+  protocol = "tcp"
+  internal_port = 8189
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  [[services.ports]]
+    port = 8189
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

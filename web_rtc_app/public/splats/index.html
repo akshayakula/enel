@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Splat library</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font-family: ui-sans-serif, system-ui, sans-serif; background: #0b0b0f; color: #e6e6ea; min-height: 100vh; display: flex; flex-direction: column; }
+  header { padding: 28px 32px 12px; border-bottom: 1px solid #1d1d24; }
+  header h1 { margin: 0 0 4px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  header p { margin: 0; font-size: 13px; color: #8a8a96; }
+  main { padding: 24px 32px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .card { background: #14141b; border: 1px solid #232330; border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+  .card h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .meta { font-size: 12px; color: #8a8a96; }
+  .actions { display: flex; gap: 8px; margin-top: auto; }
+  a.btn { flex: 1; text-align: center; padding: 9px 12px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 500; transition: background 120ms; }
+  a.primary { background: #4f46e5; color: white; }
+  a.primary:hover { background: #6366f1; }
+  a.secondary { background: #1f1f29; color: #c7c7d1; border: 1px solid #2a2a36; }
+  a.secondary:hover { background: #26263200; border-color: #3a3a4a; }
+  footer { margin-top: auto; padding: 16px 32px; color: #555562; font-size: 11px; border-top: 1px solid #1d1d24; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>Splat library</h1>
+    <p>3D Gaussian Splat scans rendered with the antimatter15 WebGL viewer.</p>
+  </header>
+  <main id="grid"></main>
+  <footer>Drop new <code>.ply</code> files into <code>public/splats/</code> and add an entry below.</footer>
+  <script>
+    const splats = [
+      {
+        title: "IMG_5562",
+        meta: "Kiri Engine 3DGS · ~83 MB · 1920×1080 source",
+        ply: "3DGS.ply",
+        zip: "IMG_5562_3dgs.zip",
+      },
+    ];
+    const grid = document.getElementById("grid");
+    for (const s of splats) {
+      const viewerUrl = `/splat/?url=${encodeURIComponent("/splats/" + s.ply)}`;
+      const card = document.createElement("div");
+      card.className = "card";
+      card.innerHTML = `
+        <h2>${s.title}</h2>
+        <div class="meta">${s.meta}</div>
+        <div class="actions">
+          <a class="btn primary" href="${viewerUrl}">Open viewer</a>
+          <a class="btn secondary" href="/splats/${s.zip}" download>Download .zip</a>
+        </div>`;
+      grid.appendChild(card);
+    }
+  </script>
+</body>
+</html>

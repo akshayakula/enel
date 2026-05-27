@@ -1,0 +1,11 @@
+[Unit]
+Description=enel: accept captive portal on guest Wi-Fi
+After=NetworkManager-wait-online.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/captive-accept.sh
+
+[Install]
+WantedBy=multi-user.target

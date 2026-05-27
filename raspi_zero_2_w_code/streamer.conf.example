@@ -6,11 +6,12 @@
 # When the SD card is in a Mac it's at /Volumes/bootfs/streamer.conf.
 
 # --- identity ---
-PI_NAME=pi-cam1
+PI_NAME=pi-cam-1
 STREAM_ID=cam1
 
 # --- server ---
 SERVER_HOST=192.168.1.248
+COMMAND_SERVERS=https://enel-stream.fly.dev http://192.168.1.248:3605
 WHIP_PORT=8889
 
 # --- live stream profile ---
