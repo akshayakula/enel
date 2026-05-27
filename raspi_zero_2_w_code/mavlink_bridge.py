@@ -245,7 +245,8 @@ async def uplink(mav: mavutil.mavfile) -> None:
     while True:
         try:
             async with websockets.connect(UPLINK_URL, ping_interval=10,
-                                          ping_timeout=10, open_timeout=10) as ws:
+                                          ping_timeout=10, open_timeout=10,
+                                          compression=None) as ws:
                 print(f"[mavlink_bridge] uplink connected -> {UPLINK_URL}", flush=True)
 
                 async def pusher():

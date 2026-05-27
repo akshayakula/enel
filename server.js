@@ -1354,7 +1354,9 @@ app.get("/phone", (req, res) => {
 // two. Works identically on LAN and Fly (no inbound reach to the Pi needed).
 const mavUplinks = new Map(); // cam -> ws (the Pi)
 const mavClients = new Map(); // cam -> Set<ws> (browsers)
-const mavWss = new WebSocketServer({ noServer: true });
+// perMessageDeflate disabled — compression negotiation gets mangled through
+// Fly's TLS proxy (1002 "reserved bits must be 0"); MAVLink frames are tiny anyway.
+const mavWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
 
 function mavRegisterUplink(cam, ws) {
   const prev = mavUplinks.get(cam);
