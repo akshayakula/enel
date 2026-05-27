@@ -348,10 +348,44 @@ body.booted  > main.flow-page {
   pointer-events: none;
   z-index: 0;
 }
+.pipe-action-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.pipe-sitrep-btn {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  flex: 0 0 auto;
+  min-width: 64px;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-color: rgba(182, 210, 109, 0.48);
+  background: rgba(5, 7, 10, 0.78);
+  color: var(--accent);
+  box-shadow: 0 0 18px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(4px);
+}
+.pipe-sitrep-btn:hover:not(:disabled) {
+  background: rgba(182, 210, 109, 0.10);
+}
+.pipe-sitrep-btn:disabled {
+  color: var(--cyan);
+  border-color: rgba(111, 208, 197, 0.55);
+}
+.pipe-sitrep-airborne {
+  color: var(--cyan);
+  border-color: rgba(111, 208, 197, 0.52);
+}
+.pipe-sitrep-airborne:hover:not(:disabled) {
+  background: rgba(111, 208, 197, 0.10);
+}
 
 .cam-row {
   position: relative;
-  z-index: 1;
+  z-index: 3;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;

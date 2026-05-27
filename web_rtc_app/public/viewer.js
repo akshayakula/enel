@@ -849,6 +849,13 @@ function nodeCenter(node, container) {
 
 function drawPipes() {
   pipesSvg.innerHTML = "";
+  let actionLayer = stage.querySelector(".pipe-action-layer");
+  if (!actionLayer) {
+    actionLayer = document.createElement("div");
+    actionLayer.className = "pipe-action-layer";
+    stage.appendChild(actionLayer);
+  }
+  actionLayer.innerHTML = "";
   const stageRect = stage.getBoundingClientRect();
   pipesSvg.setAttribute("viewBox", `0 0 ${stageRect.width} ${stageRect.height}`);
   pipesSvg.setAttribute("width", stageRect.width);
@@ -893,6 +900,20 @@ function drawPipes() {
       dot.appendChild(motion);
       pipesSvg.appendChild(dot);
     }
+
+    const t = 0.58;
+    const u = 1 - t;
+    const bx = u*u*u*src.x + 3*u*u*t*src.x + 3*u*t*t*sink.x + t*t*t*sink.x;
+    const by = u*u*u*src.y + 3*u*u*t*midY + 3*u*t*t*midY + t*t*t*sink.y;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `ctrl-btn mono pipe-sitrep-btn pipe-sitrep-${role}`;
+    btn.textContent = "sitrep";
+    btn.title = `Run sitrep for ${NODE_LABELS[streamId] || streamId}`;
+    btn.style.left = `${bx}px`;
+    btn.style.top = `${by}px`;
+    btn.addEventListener("click", () => aiSitrep(btn, streamId));
+    actionLayer.appendChild(btn);
   }
 }
 
@@ -1626,12 +1647,14 @@ async function aiDescribeCam(streamId, btn) {
   }
 }
 
-async function aiSitrep(btn) {
+async function aiSitrep(btn, streamId = null) {
   const panel = document.getElementById("sitrepPanel");
   const body  = document.getElementById("sitrepBody");
   if (!panel || !body) return;
+  const label = panel.querySelector(".sitrep-label");
   const frames = [];
-  for (const id of STREAM_IDS) {
+  const ids = streamId ? [streamId] : STREAM_IDS;
+  for (const id of ids) {
     if (!readyState.get(id)) continue;
     const cam = cams.get(id);
     const url = cam && captureFrameDataURL(cam.video);
@@ -1639,11 +1662,16 @@ async function aiSitrep(btn) {
     frames.push({ cam: id, image_b64: dataUrlToB64(url) });
   }
   panel.style.display = "";
+  if (label) label.textContent = streamId
+    ? `${NODE_LABELS[streamId] || streamId} sitrep`
+    : "fleet sitrep";
   if (frames.length === 0) {
-    body.textContent = "no live cams — nothing to fuse.";
+    body.textContent = streamId ? `${NODE_LABELS[streamId] || streamId} has no live frame to fuse.` : "no live cams — nothing to fuse.";
     return;
   }
-  body.textContent = `fusing ${frames.length} feed${frames.length > 1 ? "s" : ""}…`;
+  body.textContent = streamId
+    ? `fusing ${NODE_LABELS[streamId] || streamId} path…`
+    : `fusing ${frames.length} feed${frames.length > 1 ? "s" : ""}…`;
   const prev = btn && btn.textContent;
   if (btn) { btn.disabled = true; btn.textContent = "…"; }
   try {
@@ -1666,8 +1694,6 @@ async function aiSitrep(btn) {
 }
 
 function wireAIChrome() {
-  const btn = document.getElementById("btnSitrep");
-  if (btn) btn.addEventListener("click", () => aiSitrep(btn));
   const close = document.getElementById("sitrepClose");
   if (close) close.addEventListener("click", () => {
     const panel = document.getElementById("sitrepPanel");
