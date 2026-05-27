@@ -311,7 +311,26 @@ body.booted  > main.flow-page {
 .pill-idle  { color: var(--muted); }
 .pill-err   { color: var(--red); border-color: var(--red); }
 
-.hdr-gps { letter-spacing: 0.04em; }
+.hdr-right .hdr-btn,
+.hdr-right .hdr-gps {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 68px;
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-transform: lowercase;
+}
+.hdr-right .hdr-gps {
+  background: transparent;
+  border-radius: 2px;
+  white-space: nowrap;
+}
 .hdr-gps.ok      { color: var(--accent); border-color: rgba(182, 210, 109, 0.5); }
 .hdr-gps.err     { color: var(--red);    border-color: rgba(200, 74, 61, 0.5); }
 .hdr-gps.stale   { color: var(--amber);  border-color: rgba(210, 162, 72, 0.5); }
@@ -595,11 +614,6 @@ body.demo-mode .cam-nosig { display: none !important; }
   padding: 0;
   cursor: pointer;
   border-radius: 2px;
-}
-
-.hdr-btn {
-  flex: 0 0 auto;
-  padding: 4px 10px;
 }
 
 /* ---------- AI overlay on cam tiles ---------- */
