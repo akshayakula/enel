@@ -34,6 +34,10 @@
         </div>
         <div class="hdr-right">
           <a class="ctrl-btn hdr-btn mono" id="btnPhone" href="/phone-publish" title="Use this device as a gnd-2/gnd-3 phone camera publisher">phone</a>
+          <div class="view-toggle mono" id="btnViewMode" role="switch" tabindex="0" title="Toggle live feeds vs demo footage">
+            <span class="vt-seg" data-mode="live">live</span>
+            <span class="vt-seg" data-mode="demo">demo</span>
+          </div>
           <button class="ctrl-btn hdr-btn mono" id="btnSitrep" title="Fuse all live feeds into a single report">sitrep</button>
           <button class="ctrl-btn hdr-btn mono" id="btnSwarm" title="Issue natural-language swarm orders">swarm</button>
           <button class="ctrl-btn hdr-btn mono" id="btnGps" title="Request browser geolocation">gps</button>
@@ -141,5 +145,8 @@
 
     <script src="/mediamtx/cam1/reader.js"></script>
     <script src="/viewer.js"></script>
+    <script src="/battery-badge.js"></script>
+    <script src="/publish-control.js"></script>
+    <script src="/view-mode.js"></script>
   </body>
 </html>

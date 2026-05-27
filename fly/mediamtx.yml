@@ -1,18 +1,23 @@
 # MediaMTX config for the Fly.io deploy.
-# RTSP ingest and WebRTC ICE both use raw TCP. The public IPv4 should be
-# supplied through MTX_WEBRTCADDITIONALHOSTS after `fly ips allocate-v4`.
+# WebRTC is forced to ICE-over-TCP (no UDP) so it works through Fly's raw-TCP
+# passthrough; the public dedicated IPv4 is injected at deploy time via the
+# MTX_WEBRTCADDITIONALHOSTS env var (MediaMTX reads MTX_<PARAM> overrides).
 api: yes
 apiAddress: 127.0.0.1:9997
 
 playback: yes
 playbackAddress: 127.0.0.1:9996
 
+# RTSP ingest (Pi publishes here).
 rtspAddress: :8554
 
+# WebRTC: HTTP signaling on :8889 (proxied by the dashboard), ICE over TCP only.
 webrtcAddress: :8889
 webrtcLocalUDPAddress: ''
 webrtcLocalTCPAddress: :8189
+# webrtcAdditionalHosts is supplied via MTX_WEBRTCADDITIONALHOSTS at deploy.
 
+# Recording to the Fly volume, bounded so it can't fill the disk.
 pathDefaults:
   record: yes
   recordPath: /data/recordings/%path/%Y-%m-%d_%H-%M-%S-%f

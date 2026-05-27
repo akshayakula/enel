@@ -1,6 +1,6 @@
 const STREAM_IDS = ["cam1", "cam2", "cam3", "cam4"];
-const NODE_LABELS = { cam1: "air-1", cam2: "gnd-1", cam3: "gnd-2", cam4: "gnd-3" };
-const NODE_ROLES  = { cam1: "airborne", cam2: "ground", cam3: "ground", cam4: "ground" };
+const NODE_LABELS = { cam1: "gnd-1", cam2: "gnd-2", cam3: "gnd-3", cam4: "gnd-4" };
+const NODE_ROLES  = { cam1: "ground", cam2: "ground", cam3: "ground", cam4: "ground" };
 const STATE_POLL_MS = 3000;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -120,9 +120,17 @@ function buildCamCard(container, streamId) {
   video.playsInline = true;
   video.muted = true;
   videoWrap.appendChild(video);
+  const fallback = document.createElement("video");
+  fallback.className = "cam-fallback";
+  fallback.src = `/fallbacks/${streamId}.mp4`;
+  fallback.autoplay = true;
+  fallback.loop = true;
+  fallback.playsInline = true;
+  fallback.muted = true;
+  videoWrap.appendChild(fallback);
   const scanline = el("div", "cam-scanline");
   videoWrap.appendChild(scanline);
-  const noSig = el("div", "cam-nosig mono", "NO SIGNAL");
+  const noSig = el("div", "cam-nosig mono", "no signal");
   videoWrap.appendChild(noSig);
 
   const stats = el("div", "cam-stats mono");
@@ -160,7 +168,7 @@ function buildCamCard(container, streamId) {
   btnOff.appendChild(offFill);
   btnOff.appendChild(offLabel);
 
-  btnIdentify.addEventListener("click", () => piPost(streamId, "ring/identify", { ttl: 5 }, btnIdentify));
+  btnIdentify.addEventListener("click", () => sendCommand(streamId, "identify", { ttl: 5 }, btnIdentify));
   colorInput.addEventListener("change", () => {
     const { r, g, b } = hexToRgb(colorInput.value);
     piPost(streamId, "ring/color", { r, g, b, ttl: 60 }, colorInput);
@@ -194,7 +202,7 @@ function buildCamCard(container, streamId) {
     wireDroneSocket(streamId, drone);
   }
 
-  return { status, video, bitrateEl, uptimeEl, tempEl, ringEl, noSig, aiOverlay, drone };
+  return { status, video, fallback, bitrateEl, uptimeEl, tempEl, ringEl, noSig, aiOverlay, drone };
 }
 
 // -----------------------------------------------------------------------------
@@ -731,6 +739,31 @@ function hexToRgb(hex) {
   return { r: (n >> 16) & 0xff, g: (n >> 8) & 0xff, b: n & 0xff };
 }
 
+// One-shot command via the pull model: write to this dashboard's
+// /api/command/<cam>; the Pi polls every reachable dashboard and executes it.
+// Works on both LAN and remote (Fly) dashboards.
+async function sendCommand(streamId, cmd, args, btn) {
+  const prev = btn && btn.textContent;
+  if (btn && btn.tagName === "BUTTON") btn.disabled = true;
+  try {
+    const res = await fetch(`/api/command/${streamId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ cmd, args: args || {} }),
+    });
+    if (btn && btn.tagName === "BUTTON") {
+      btn.textContent = res.ok ? "sent" : "ERR";
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 900);
+    }
+  } catch (err) {
+    if (btn && btn.tagName === "BUTTON") {
+      btn.textContent = "ERR";
+      setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 1200);
+    }
+    console.error(`command ${streamId}/${cmd} failed`, err);
+  }
+}
+
 async function piPost(streamId, sub, body, btn) {
   const prev = btn && btn.textContent;
   if (btn && btn.tagName === "BUTTON") btn.disabled = true;
@@ -764,7 +797,8 @@ function attachReader(streamId, baseUrl, ui, container) {
       ui.noSig.style.display = "none";
     },
     onError: (err) => {
-      ui.status.textContent = "offline";
+      ui.video.srcObject = null;
+      ui.status.textContent = "sim";
       ui.status.className = "cam-status mono offline";
       container.dataset.state = "offline";
       ui.noSig.style.display = "";
