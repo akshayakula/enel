@@ -1,4 +1,5 @@
 const STREAM_IDS = ["cam1", "cam2", "cam3", "cam4"];
+const DRONE_STREAM_ID = "cam1";
 const NODE_LABELS = { cam1: "gnd-1", cam2: "gnd-2", cam3: "gnd-3", cam4: "gnd-4" };
 const NODE_ROLES  = { cam1: "ground", cam2: "ground", cam3: "ground", cam4: "ground" };
 const STATE_POLL_MS = 3000;
@@ -193,10 +194,10 @@ function buildCamCard(container, streamId) {
   container.appendChild(stats);
   container.appendChild(controls);
 
-  // Drone panel — airborne unit only (cam1). MAVLink yaw stick + telemetry
-  // + arm/disarm. Hidden by default, shown once WS connects.
+  // Drone panel is keyed to cam1 because the air-unit MAVLink bridge publishes
+  // telemetry under that slot even when the camera label is a ground unit.
   let drone = null;
-  if (NODE_ROLES[streamId] === "airborne") {
+  if (streamId === DRONE_STREAM_ID) {
     drone = buildDronePanel(streamId);
     container.appendChild(drone.root);
     wireDroneSocket(streamId, drone);
@@ -1773,7 +1774,7 @@ function collectSwarmContext() {
   for (const id of STREAM_IDS) {
     ctx.cams.push({
       id,
-      role:  NODE_ROLES[id],
+      role:  id === DRONE_STREAM_ID ? "airborne" : NODE_ROLES[id],
       ready: !!readyState.get(id),
       bearing_deg: mmState && mmState[id] ? Math.round(mmState[id].bearing) : null,
     });
