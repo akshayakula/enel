@@ -2,6 +2,8 @@
 # enel NeoPixel 16-ring lifecycle indicator.
 # Ring hardware: SK6812 RGBW 16-pixel ring (W28666-C). 4 bytes/LED, GRBW order.
 # LED 0 is physical north. Brightness is hard-capped; colors are gamma-corrected.
+# On power-on it reads the UPS HAT's INA219 over I2C and shows a battery gauge
+# before the lifecycle loop. Once streaming, LED 0 stays red as the north marker.
 import json
 import math
 import os
@@ -23,6 +25,66 @@ MAX_BRIGHT   = 32      # hard cap (~12.5%) — safe off Pi 5V rail
 GAMMA        = 2.2
 NORTH_LED    = 0
 OVERRIDE_PATH = "/run/ring-override.json"
+
+# --- INA219 / UPS HAT battery -------------------------------------------------
+INA219_BUS        = 1                  # GPIO header I2C bus (needs dtparam=i2c_arm=on)
+INA219_ADDRS      = (0x43, 0x42, 0x41, 0x40)
+INA219_REG_CONFIG = 0x00
+INA219_REG_SHUNT  = 0x01
+INA219_REG_BUSV   = 0x02
+BATT_V_EMPTY      = 3.0   # Li-ion ~empty
+BATT_V_FULL       = 4.2   # Li-ion ~full
+
+
+def _swap16(word):
+    return ((word & 0xFF) << 8) | (word >> 8)
+
+
+def read_battery():
+    """Return (voltage, percent, charging) from the INA219, or None if absent."""
+    try:
+        import smbus2
+    except ImportError:
+        return None
+    try:
+        bus = smbus2.SMBus(INA219_BUS)
+    except (FileNotFoundError, OSError):
+        return None
+    addr = None
+    try:
+        for a in INA219_ADDRS:
+            try:
+                bus.read_word_data(a, INA219_REG_CONFIG)
+                addr = a
+                break
+            except OSError:
+                continue
+        if addr is None:
+            return None
+        raw_bus = _swap16(bus.read_word_data(addr, INA219_REG_BUSV))
+        voltage = (raw_bus >> 3) * 0.004
+        raw_sh = _swap16(bus.read_word_data(addr, INA219_REG_SHUNT))
+        if raw_sh > 0x7FFF:
+            raw_sh -= 0x10000
+        charging = raw_sh > 50
+    except OSError:
+        return None
+    finally:
+        try:
+            bus.close()
+        except Exception:
+            pass
+    pct = (voltage - BATT_V_EMPTY) / (BATT_V_FULL - BATT_V_EMPTY) * 100.0
+    pct = max(0.0, min(100.0, pct))
+    return (voltage, pct, charging)
+
+
+def level_rgb(pct):
+    if pct > 50:
+        return (0.0, 1.0, 0.0)
+    if pct >= 20:
+        return (1.0, 0.45, 0.0)
+    return (1.0, 0.0, 0.0)
 
 
 def gamma_byte(v):
@@ -63,6 +125,36 @@ def clear(strip):
     strip.show()
 
 
+def battery_intro(strip, pct, charging, duration_fill=1.6, duration_hold=1.5):
+    n = int(round(pct / 100.0 * NUM_LEDS))
+    if pct > 0:
+        n = max(1, n)
+    r, g, b = level_rgb(pct)
+
+    step = duration_fill / max(n, 1)
+    for k in range(n):
+        strip.setPixelColor(k, rgb(r, g, b, 0.85))
+        strip.show()
+        time.sleep(step)
+
+    t0 = time.monotonic()
+    while time.monotonic() - t0 < duration_hold:
+        t = time.monotonic() - t0
+        breathe = 0.55 + 0.30 * (0.5 + 0.5 * math.sin(t * 3.0))
+        spark = int((t * 10) % NUM_LEDS) if charging else -1
+        for i in range(NUM_LEDS):
+            if i < n:
+                lvl = breathe
+                if i == spark:
+                    lvl = min(1.0, breathe + 0.4)
+                strip.setPixelColor(i, rgb(r, g, b, lvl))
+            else:
+                strip.setPixelColor(i, 0)
+        strip.show()
+        time.sleep(1.0 / 60.0)
+    clear(strip)
+
+
 def boot_wipe(strip, duration=1.2):
     steps = NUM_LEDS
     step_time = duration * 0.6 / steps
@@ -94,12 +186,8 @@ def render(strip, mode, t):
             lvl = max(0.0, 1.0 - d / 2.5) * 0.7
             strip.setPixelColor(i, rgb(0.0, 0.8, 1.0, lvl))
     elif mode == "idle":
-        pulse = 0.3 + 0.3 * (0.5 + 0.5 * math.sin(t * 2.0))
         for i in range(NUM_LEDS):
-            if i == NORTH_LED:
-                strip.setPixelColor(i, rgb(0.0, 0.9, 1.0, pulse))
-            else:
-                strip.setPixelColor(i, 0)
+            strip.setPixelColor(i, 0)
     elif mode == "warn":
         b = 0.15 + 0.45 * (0.5 + 0.5 * math.sin(t * 3.5))
         for i in range(NUM_LEDS):
@@ -242,7 +330,20 @@ def main():
     signal.signal(signal.SIGTERM, _exit)
     signal.signal(signal.SIGINT, _exit)
 
-    boot_wipe(strip)
+    batt = None
+    try:
+        batt = read_battery()
+    except Exception:
+        batt = None
+    if batt is not None:
+        voltage, pct, charging = batt
+        print("ring: battery %.2fV %.0f%% %s"
+              % (voltage, pct, "charging" if charging else "discharging"),
+              flush=True)
+        battery_intro(strip, pct, charging)
+    else:
+        print("ring: no INA219 detected - fallback boot wipe", flush=True)
+        boot_wipe(strip)
     start = time.monotonic()
     last_state_check = 0.0
     mode = "wifi_wait"
