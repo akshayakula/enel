@@ -14,6 +14,10 @@ let localStream = null;
 let publisher = null;
 let currentStreamId = null;
 
+function isExpectedCameraError(error) {
+  return ["NotFoundError", "NotAllowedError", "SecurityError"].includes(error?.name);
+}
+
 function publishClass(text) {
   const value = String(text || "").toLowerCase();
   if (value.includes("live")) return "live";
@@ -116,7 +120,7 @@ async function publishToStream(streamId) {
       },
     });
   } catch (error) {
-    console.error(error);
+    if (!isExpectedCameraError(error)) console.error(error);
     setPublishStatus("Publish failed");
     setCameraStatus("Camera or publisher error", "error");
     stopButton.disabled = true;
