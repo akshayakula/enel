@@ -7,22 +7,20 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body class="mil booting">
-    <!-- Cold-boot intro. Removed by viewer.js after the sequence completes. -->
+    <!-- Landing loader. Removed by viewer.js after the app is ready to reveal. -->
     <div id="enelBoot" class="boot-overlay" aria-hidden="true">
       <canvas id="enelBootLattice" class="boot-lattice"></canvas>
       <div class="boot-scanline"></div>
       <div class="boot-content mono">
         <div class="boot-header">
-          <span class="boot-cross">+</span>
-          <span class="boot-id" id="bootId">cold boot · rev 4.19.26 · classification // enel</span>
-          <span class="boot-cross">+</span>
+          <span class="boot-id" id="bootId">loading dashboard</span>
         </div>
         <div class="boot-title">
           <span class="boot-title-big" id="bootTitleBig">ENEL</span>
           <span class="boot-title-sub" id="bootTitleSub">edge-networked environment lattice</span>
         </div>
-        <ul class="boot-log" id="bootLog"></ul>
-        <div class="boot-hint">press any key to skip</div>
+        <div class="boot-progress" aria-hidden="true"><span></span></div>
+        <div class="boot-hint">click or press any key to enter</div>
       </div>
     </div>
 

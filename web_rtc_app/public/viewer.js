@@ -2312,23 +2312,22 @@ function geoOnDroneGps(gps) {
 
 wireGeo();
 
-// Run the cold-boot intro, then reveal the dashboard. Skippable.
+// Run the landing loader, then reveal the dashboard. Skippable.
 runBootIntro().then(() => start());
 
 // ---------------------------------------------------------------------------
-// Cold-boot intro: hex lattice draws itself in, ENEL glitches in, systems-log
-// types out, then the overlay fades and the main UI rolls in.
+// Landing loader: a short brand/loading transition, then the main UI rolls in.
 // ---------------------------------------------------------------------------
 function runBootIntro() {
   const overlay = document.getElementById("enelBoot");
   if (!overlay) return Promise.resolve();
 
   const canvas  = document.getElementById("enelBootLattice");
-  const logEl   = document.getElementById("bootLog");
-  const subEl   = document.getElementById("bootTitleSub");
 
   let skipped = false;
+  let latticeCtrl = null;
   const dismiss = () => new Promise((resolve) => {
+    if (latticeCtrl) latticeCtrl.stop();
     overlay.classList.add("dismissing");
     document.body.classList.remove("booting");
     document.body.classList.add("booted");
@@ -2347,55 +2346,10 @@ function runBootIntro() {
   window.addEventListener("keydown", skipAll, { once: true });
   overlay.addEventListener("click", skipAll, { once: true });
 
-  // --- 1. hex lattice draw-in on canvas ---
-  const latticeCtrl = drawBootLattice(canvas);
-
-  // --- 2. subtitle typewriter ---
-  const subFull = subEl.textContent;
-  subEl.textContent = "";
-  const typeSub = async () => {
-    for (let i = 0; i <= subFull.length; i++) {
-      if (skipped) return;
-      subEl.textContent = subFull.slice(0, i);
-      await sleep(32 + Math.random() * 24);
-    }
-  };
-
-  // --- 3. systems-online log ---
-  const logLines = [
-    { tag: "[mesh]",   msg: "spanning tree converged",          state: "ok" },
-    { tag: "[cam1]",   msg: "gnd-1 handshake",                   state: "ok" },
-    { tag: "[cam2]",   msg: "air-2 mavlink bridge",              state: "ok" },
-    { tag: "[cam3]",   msg: "gnd-3 handshake",                   state: "ok" },
-    { tag: "[cam4]",   msg: "gnd-4 handshake",                   state: "warn", stateText: "stale" },
-    { tag: "[splat]",  msg: "gaussian cache primed",             state: "ok" },
-    { tag: "[ai]",     msg: "vision + sitrep models online",     state: "ok" },
-    { tag: "[uart]",   msg: "mavlink bridge · cam2",             state: "ok" },
-    { tag: "[gps]",    msg: "geo lock acquiring",                state: "warn", stateText: "pending" },
-    { tag: "[ring]",   msg: "sk6812 lattice armed",              state: "ok" },
-    { tag: "[enel]",   msg: "operator console ready",            state: "ok", stateText: "go" },
-  ];
-  const runLog = async () => {
-    await sleep(550);
-    for (const line of logLines) {
-      if (skipped) return;
-      const li = document.createElement("li");
-      li.className = line.state || "";
-      li.innerHTML =
-        `<span class="tag">${line.tag}</span>` +
-        `<span class="msg">${line.msg}</span>` +
-        `<span class="state">${line.stateText || line.state || ""}</span>`;
-      logEl.appendChild(li);
-      await sleep(130 + Math.random() * 120);
-    }
-  };
+  latticeCtrl = drawBootLattice(canvas);
 
   return new Promise(async (resolve) => {
-    const tasks = [typeSub(), runLog()];
-    await Promise.all(tasks);
-    // Hold for a beat so the user can read the last "go".
-    if (!skipped) await sleep(550);
-    latticeCtrl.stop();
+    await sleep(900);
     if (!skipped) await dismiss();
     resolve();
   });
