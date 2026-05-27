@@ -157,6 +157,7 @@ function buildCamCard(container, streamId) {
   const uptimeEl = el("span", "stats-uptime", ""); // kept for API compat; not shown
 
   const controls = el("div", "cam-controls");
+  controls.classList.toggle("cam-controls-air", streamId === DRONE_STREAM_ID);
   const btnIdentify = el("button", "ctrl-btn", "ident");
   btnIdentify.title = "Pulse the ring cyan for 5s";
 
@@ -165,6 +166,10 @@ function buildCamCard(container, streamId) {
 
   const btnAI = el("button", "ctrl-btn", "ai");
   btnAI.title = "Ask AI to describe the current frame";
+  const btnReport = el("button", "ctrl-btn ctrl-btn--report", "report");
+  btnReport.title = "Run a situation report for this unit";
+  const btnSwarmUnit = el("button", "ctrl-btn ctrl-btn--swarm", "swarm");
+  btnSwarmUnit.title = "Open swarm commander focused on this unit";
 
   // Power-off: press and hold for 1.2s — no browser popup. The button fills
   // with red while held; release early cancels. Committing locks it out.
@@ -179,24 +184,31 @@ function buildCamCard(container, streamId) {
   btnIdentify.addEventListener("click", () => sendCommand(streamId, "identify", { ttl: 5 }, btnIdentify));
   btnClear.addEventListener("click", () => piPost(streamId, "ring/clear", {}, btnClear));
   btnAI.addEventListener("click", () => aiDescribeCam(streamId, btnAI));
+  btnReport.addEventListener("click", () => aiSitrep(btnReport, streamId, reportBody));
+  btnSwarmUnit.addEventListener("click", () => focusSwarmFor(streamId));
   attachHoldToConfirm(btnOff, offFill, offLabel, 1200, () => {
     piPost(streamId, "system/poweroff", {}, btnOff);
   });
 
-  controls.appendChild(btnIdentify);
   controls.appendChild(btnAI);
-  controls.appendChild(btnClear);
-  controls.appendChild(btnOff);
+  controls.appendChild(btnReport);
+  controls.appendChild(btnSwarmUnit);
+  if (streamId !== DRONE_STREAM_ID) {
+    controls.appendChild(btnIdentify);
+    controls.appendChild(btnClear);
+    controls.appendChild(btnOff);
+  }
 
   const aiOverlay = el("div", "cam-ai-overlay mono");
   videoWrap.appendChild(aiOverlay);
+  const reportBody = el("div", "cam-report mono");
+  reportBody.textContent = "situation report ready";
 
   container.appendChild(header);
   container.appendChild(videoWrap);
   container.appendChild(stats);
-  if (streamId !== DRONE_STREAM_ID) {
-    container.appendChild(controls);
-  }
+  container.appendChild(controls);
+  container.appendChild(reportBody);
 
   // Drone panel is keyed to AIR-2 / cam2.
   let drone = null;
@@ -206,7 +218,7 @@ function buildCamCard(container, streamId) {
     wireDroneSocket(streamId, drone);
   }
 
-  return { status, video, fallback, bitrateEl, uptimeEl, tempEl, ringEl, noSig, aiOverlay, drone };
+  return { status, video, fallback, bitrateEl, uptimeEl, tempEl, ringEl, noSig, aiOverlay, reportBody, drone };
 }
 
 // -----------------------------------------------------------------------------
@@ -1007,19 +1019,6 @@ function drawPipes() {
       }
     }
 
-    const t = 0.38;
-    const u = 1 - t;
-    const bx = u*u*u*src.x + 3*u*u*t*src.x + 3*u*t*t*sink.x + t*t*t*sink.x;
-    const by = u*u*u*src.y + 3*u*u*t*midY + 3*u*t*t*midY + t*t*t*sink.y;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = `ctrl-btn mono pipe-sitrep-btn pipe-sitrep-${role}${ready ? "" : " pipe-sitrep-offline"}`;
-    btn.textContent = "Situation Report";
-    btn.title = `Run situation report for ${NODE_LABELS[streamId] || streamId}`;
-    btn.style.left = `${bx}px`;
-    btn.style.top = `${by}px`;
-    btn.addEventListener("click", () => aiSitrep(btn, streamId));
-    actionLayer.appendChild(btn);
   }
 }
 
@@ -1870,11 +1869,11 @@ async function aiDescribeCam(streamId, btn) {
   }
 }
 
-async function aiSitrep(btn, streamId = null) {
+async function aiSitrep(btn, streamId = null, inlineBody = null) {
   const panel = document.getElementById("sitrepPanel");
-  const body  = document.getElementById("sitrepBody");
-  if (!panel || !body) return;
-  const label = panel.querySelector(".sitrep-label");
+  const body  = inlineBody || document.getElementById("sitrepBody");
+  if (!body) return;
+  const label = panel && panel.querySelector(".sitrep-label");
   const frames = [];
   const ids = streamId ? [streamId] : STREAM_IDS;
   for (const id of ids) {
@@ -1884,14 +1883,17 @@ async function aiSitrep(btn, streamId = null) {
     if (!url) continue;
     frames.push({ cam: id, image_b64: dataUrlToB64(url) });
   }
-  panel.style.display = "";
-  if (label) label.textContent = streamId
+  if (!inlineBody && panel) panel.style.display = "";
+  if (!inlineBody && label) label.textContent = streamId
     ? `${NODE_LABELS[streamId] || streamId} situation report`
     : "fleet situation report";
   if (frames.length === 0) {
     body.textContent = streamId ? `${NODE_LABELS[streamId] || streamId} has no live frame to fuse.` : "no live cams — nothing to fuse.";
+    body.classList.add("is-open", "is-empty");
     return;
   }
+  body.classList.add("is-open");
+  body.classList.remove("is-empty");
   body.textContent = streamId
     ? `fusing ${NODE_LABELS[streamId] || streamId} path…`
     : `fusing ${frames.length} feed${frames.length > 1 ? "s" : ""}…`;
@@ -1906,11 +1908,14 @@ async function aiSitrep(btn, streamId = null) {
     const out = await res.json().catch(() => ({}));
     if (!res.ok || out.error) {
       body.textContent = `sitrep failed: ${out.error || res.status}`;
+      body.classList.add("is-empty");
     } else {
       body.textContent = out.text || "(empty)";
+      body.classList.toggle("is-empty", !out.text);
     }
   } catch (err) {
     body.textContent = `sitrep failed: ${err.message}`;
+    body.classList.add("is-empty");
   } finally {
     if (btn) { btn.textContent = prev; btn.disabled = false; }
   }
@@ -1930,6 +1935,23 @@ wireAIChrome();
 // Swarm commander — natural-language orders get parsed server-side into a
 // structured plan (drone yaw + ground ring-compass), then executed here.
 // ---------------------------------------------------------------------------
+function focusSwarmFor(streamId) {
+  const panel = document.getElementById("swarmPanel");
+  const input = document.getElementById("swarmInput");
+  if (!panel || !input) return;
+  const label = NODE_LABELS[streamId] || streamId;
+  panel.style.display = "";
+  panel.dataset.focusUnit = streamId;
+  input.placeholder = streamId === DRONE_STREAM_ID
+    ? `AIR-2 order, e.g. "yaw right 20 degrees and hold position"`
+    : `${label} order, e.g. "face north" or "point toward the target"`;
+  if (!input.value.trim()) input.value = `${label}: `;
+  setTimeout(() => {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }, 50);
+}
+
 function wireSwarmChrome() {
   const open  = document.getElementById("btnSwarm");
   const panel = document.getElementById("swarmPanel");
@@ -1943,6 +1965,8 @@ function wireSwarmChrome() {
   open.addEventListener("click", () => {
     const showing = panel.style.display !== "none";
     panel.style.display = showing ? "none" : "";
+    panel.dataset.focusUnit = "";
+    input.placeholder = 'e.g. "have ground units form a triangle facing north, drone pivot right 45°"';
     if (!showing) setTimeout(() => input.focus(), 50);
   });
   if (close) close.addEventListener("click", () => { panel.style.display = "none"; });
@@ -1951,11 +1975,15 @@ function wireSwarmChrome() {
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
-    issueSwarmOrder(text, btn, log);
+    issueSwarmOrder(text, btn, log, panel.dataset.focusUnit || "");
   });
 }
 
-async function issueSwarmOrder(text, btn, log) {
+async function issueSwarmOrder(text, btn, log, focusUnit = "") {
+  const focusLabel = focusUnit ? (NODE_LABELS[focusUnit] || focusUnit) : "";
+  const commandText = focusUnit && !text.toLowerCase().startsWith(focusLabel.toLowerCase())
+    ? `${focusLabel}: ${text}`
+    : text;
   const entry = document.createElement("div");
   entry.className = "swarm-entry";
   entry.innerHTML = `
@@ -1965,7 +1993,7 @@ async function issueSwarmOrder(text, btn, log) {
     </div>
     <div class="swarm-entry-rationale">parsing…</div>
     <ul class="swarm-entry-actions"></ul>`;
-  entry.querySelector(".swarm-entry-text").textContent = text;
+  entry.querySelector(".swarm-entry-text").textContent = commandText;
   log.prepend(entry);
   // Cap log length.
   while (log.children.length > 8) log.removeChild(log.lastChild);
@@ -1980,7 +2008,7 @@ async function issueSwarmOrder(text, btn, log) {
     const res = await fetch("/api/ai/swarm", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, context }),
+      body: JSON.stringify({ text: commandText, context }),
     });
     const out = await res.json().catch(() => ({}));
     if (!res.ok || out.error) {

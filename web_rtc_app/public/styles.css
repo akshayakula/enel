@@ -561,11 +561,14 @@ body.demo-mode .cam-nosig { display: none !important; }
 
 .cam-controls {
   display: grid;
-  grid-template-columns: minmax(54px, 1fr) repeat(3, minmax(42px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   align-items: center;
   padding: 8px 10px;
   border-top: 1px solid var(--line);
+}
+.cam-controls-air {
+  border-bottom: 1px solid var(--line);
 }
 
 .ctrl-btn {
@@ -606,6 +609,53 @@ body.demo-mode .cam-nosig { display: none !important; }
 .ctrl-btn:disabled { opacity: 0.45; cursor: default; }
 .ctrl-btn--ghost { color: var(--dim); }
 .ctrl-btn--danger { color: var(--red); border-color: rgba(200, 74, 61, 0.35); }
+.ctrl-btn--report {
+  color: var(--text);
+  border-color: rgba(182, 210, 109, 0.36);
+  background: rgba(182, 210, 109, 0.035);
+}
+.ctrl-btn--report:hover:not(:disabled) {
+  color: #d8f28b;
+  border-color: rgba(182, 210, 109, 0.75);
+}
+.ctrl-btn--swarm {
+  color: var(--cyan);
+  border-color: rgba(111, 208, 197, 0.36);
+  background: rgba(111, 208, 197, 0.035);
+}
+.ctrl-btn--swarm:hover:not(:disabled) {
+  color: #9cf5ec;
+  border-color: rgba(111, 208, 197, 0.78);
+}
+
+.cam-report {
+  display: none;
+  margin: 0 10px 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(182, 210, 109, 0.24);
+  border-left-color: rgba(182, 210, 109, 0.75);
+  background:
+    linear-gradient(90deg, rgba(182, 210, 109, 0.08), rgba(0, 0, 0, 0.10)),
+    rgba(0, 0, 0, 0.22);
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  max-height: 148px;
+  overflow: auto;
+}
+.cam-report.is-open {
+  display: block;
+  animation: reportIn 180ms ease-out both;
+}
+.cam-report.is-empty {
+  color: var(--muted);
+  border-left-color: rgba(122, 129, 112, 0.7);
+}
+@keyframes reportIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 /* Press-and-hold confirm variant: fill sweeps left→right across the button;
    label sits on top. No browser popup, no accidental click. */
@@ -1989,7 +2039,15 @@ body.demo-mode .cam-nosig { display: none !important; }
   }
 }
 @media (max-width: 680px) {
-  .cam-row { grid-template-columns: 1fr; }
+  .cam-row {
+    grid-template-columns: 1fr;
+    width: calc(100vw - 28px);
+    max-width: calc(100vw - 28px);
+  }
+  .cam-node {
+    width: calc(100vw - 28px);
+    max-width: calc(100vw - 28px);
+  }
   .flow-stage { padding-bottom: 238px; }
   .flow-header {
     gap: 12px;
@@ -2024,17 +2082,11 @@ body.demo-mode .cam-nosig { display: none !important; }
     grid-column: span 2;
   }
   .cam-controls {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 160px));
+    justify-content: start;
   }
   .cam-controls .ctrl-btn--hold {
     grid-column: 1 / -1;
-  }
-  .ctrl-btn.pipe-sitrep-btn {
-    min-width: 148px;
-    min-height: 34px;
-    padding: 7px 10px;
-    font-size: 0.68rem;
-    line-height: 1.15;
   }
   .ctrl-color {
     width: 100%;
