@@ -76,9 +76,10 @@ Hard-won operational knowledge for agents working on this repo. Keep this curren
   Install **system-wide as root** OR run the service as the user (we run `mavlink-bridge.service`
   as `User=pi-air1` since deps are in its user site).
 - **`mavlink_bridge.py`**: opens `/dev/ttyAMA0 @ 921600`, holds the FC link, sends RC override at
-  20Hz (CH4 yaw; others released so the ELRS pilot owns throttle/roll/pitch), serves a local WS
-  on `:8090`, and (new) dials OUT to Fly. Commands: `{"type":"arm","on":bool}`,
-  `{"type":"yaw","pwm":1000-2000}`. Telemetry frames: `{"type":"tele",...}`.
+  20Hz (CH4 yaw and CH3 throttle only while fresh deadman commands are arriving; roll/pitch/CH5-8
+  released), serves a local WS on `:8090`, and dials OUT to Fly. Commands:
+  `{"type":"arm","on":bool}`, `{"type":"yaw","pwm":1000-2000}`,
+  `{"type":"throttle","pwm":1000-2000}`. Telemetry frames: `{"type":"tele",...}`.
 - VERIFIED: Pi powered by FC, MAVLink link live, **arm/throttle/yaw all controllable from the Pi**.
 
 ## MAVLink-over-Fly (broadcasting drone data to the cloud) — FIXED VIA HTTP POLLING
@@ -86,7 +87,7 @@ Hard-won operational knowledge for agents working on this repo. Keep this curren
   - Pi POSTs telemetry to `POST /api/pi/cam2/mavlink/uplink` and receives queued commands in
     the JSON response.
   - Browser GETs latest telemetry from `GET /api/pi/cam2/mavlink`.
-  - Browser POSTs arm/yaw commands to `POST /api/pi/cam2/mavlink`.
+  - Browser POSTs arm/yaw/throttle commands to `POST /api/pi/cam2/mavlink`.
 - `mavlink_bridge.py` defaults to
   `MAV_UPLINK_URL=https://enel-stream.fly.dev/api/pi/cam2/mavlink/uplink` and polls at
   `MAV_HTTP_POLL_HZ=20`, enough to keep yaw commands inside the 250 ms deadman. It still serves

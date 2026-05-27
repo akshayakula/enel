@@ -256,6 +256,17 @@ function buildDronePanel(streamId) {
   stickTrack.append(stickFill, stickKnob);
   stickWrap.append(stickLabel, stickTrack, stickPwm);
 
+  // --- throttle hold -------------------------------------------------------
+  // Deadman throttle: sends CH3 only while the operator is holding/dragging.
+  const throttleWrap = el("div", "drone-stick drone-throttle");
+  const throttleLabel = el("span", "drone-stick-label", "thr");
+  const throttleTrack = el("div", "drone-stick-track drone-throttle-track");
+  const throttleFill  = el("div", "drone-stick-fill drone-throttle-fill");
+  const throttleKnob  = el("div", "drone-stick-knob drone-throttle-knob");
+  const throttlePwm   = el("span", "drone-stick-pwm", "1000");
+  throttleTrack.append(throttleFill, throttleKnob);
+  throttleWrap.append(throttleLabel, throttleTrack, throttlePwm);
+
   // --- arm/disarm row ------------------------------------------------------
   const armRow = el("div", "drone-row drone-arm-row");
   const btnArm    = el("button", "ctrl-btn ctrl-btn--arm ctrl-btn--hold", "");
@@ -328,7 +339,7 @@ function buildDronePanel(streamId) {
 
   expanded.append(topRow, detail, battWrap, rcStrip);
 
-  root.append(headRow, teleGrid, stickWrap, armRow, expanded);
+  root.append(headRow, teleGrid, stickWrap, throttleWrap, armRow, expanded);
 
   // chevron toggle
   expandBtn.addEventListener("click", () => {
@@ -341,6 +352,7 @@ function buildDronePanel(streamId) {
     root, linkPill, modePill, armPill, expandBtn, expanded,
     cellBat: cellBat.val, cellGps: cellGps.val, cellAlt: cellAlt.val, cellYaw: cellYaw.val,
     stickTrack, stickFill, stickKnob, stickPwm,
+    throttleTrack, throttleFill, throttleKnob, throttlePwm,
     btnArm, armFill, armLabel, btnDisarm,
     // expanded refs
     horiz, heading,
@@ -506,10 +518,16 @@ function wireDroneSocket(streamId, d) {
   const YAW_SEND_HZ = 20;
   const YAW_CENTER_PWM = 1500;
   const YAW_MIN = 1000, YAW_MAX = 2000;
+  const THROTTLE_SEND_HZ = 20;
+  const THROTTLE_IDLE_PWM = 1000;
+  const THROTTLE_MIN = 1000, THROTTLE_MAX = 2000;
 
   let yawPwm = YAW_CENTER_PWM;
   let yawDragging = false;
   let yawSendTimer = null;
+  let throttlePwm = THROTTLE_IDLE_PWM;
+  let throttleDragging = false;
+  let throttleSendTimer = null;
   let lastTeleTs = 0;
   let pollBusy = false;
 
@@ -575,9 +593,10 @@ function wireDroneSocket(streamId, d) {
       d.battFill.classList.toggle("crit", pct != null && pct < 15);
     }
     flashData(streamId, "telemetry-fresh");
-    // RC channels — we only command CH4 from this UI; others show released.
+    // RC channels — this UI can command CH3 throttle and CH4 yaw.
     const ourYaw = Number(d.stickPwm.textContent) || 1500;
-    const chVals = [0, 0, 0, ourYaw, 0, 0, 0, 0];
+    const ourThrottle = throttleDragging ? (Number(d.throttlePwm.textContent) || THROTTLE_IDLE_PWM) : 0;
+    const chVals = [0, 0, ourThrottle, ourYaw, 0, 0, 0, 0];
     d.rcCells.forEach((c, i) => {
       const pwm = chVals[i];
       const active = pwm >= 1000 && pwm <= 2000;
@@ -683,12 +702,75 @@ function wireDroneSocket(streamId, d) {
 
   updateKnob();
 
+  // ---- throttle hold interaction -----------------------------------------
+  const updateThrottle = () => {
+    const norm = (throttlePwm - THROTTLE_MIN) / (THROTTLE_MAX - THROTTLE_MIN);
+    const pct = Math.max(0, Math.min(100, norm * 100));
+    d.throttleKnob.style.left = pct + "%";
+    d.throttleFill.style.left = "0";
+    d.throttleFill.style.right = "auto";
+    d.throttleFill.style.width = pct + "%";
+    d.throttlePwm.textContent = String(throttlePwm);
+  };
+
+  const setThrottleFromClientX = (clientX) => {
+    const rect = d.throttleTrack.getBoundingClientRect();
+    const x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const norm = x / Math.max(1, rect.width);
+    throttlePwm = Math.round(THROTTLE_MIN + norm * (THROTTLE_MAX - THROTTLE_MIN));
+    throttlePwm = Math.max(THROTTLE_MIN, Math.min(THROTTLE_MAX, throttlePwm));
+    updateThrottle();
+  };
+
+  const startThrottleSending = () => {
+    if (throttleSendTimer) return;
+    throttleSendTimer = setInterval(() => sendFrame({ type: "throttle", pwm: throttlePwm }),
+                                    Math.round(1000 / THROTTLE_SEND_HZ));
+  };
+  const stopThrottleSending = () => {
+    if (!throttleSendTimer) return;
+    clearInterval(throttleSendTimer);
+    throttleSendTimer = null;
+  };
+
+  d.throttleTrack.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    throttleDragging = true;
+    d.throttleTrack.setPointerCapture(e.pointerId);
+    d.throttleTrack.classList.add("active");
+    setThrottleFromClientX(e.clientX);
+    sendFrame({ type: "throttle", pwm: throttlePwm });
+    startThrottleSending();
+  });
+  d.throttleTrack.addEventListener("pointermove", (e) => {
+    if (!throttleDragging) return;
+    setThrottleFromClientX(e.clientX);
+  });
+  const endThrottle = (e) => {
+    if (!throttleDragging) return;
+    throttleDragging = false;
+    try { d.throttleTrack.releasePointerCapture(e.pointerId); } catch {}
+    d.throttleTrack.classList.remove("active");
+    throttlePwm = THROTTLE_IDLE_PWM;
+    updateThrottle();
+    sendFrame({ type: "throttle", pwm: THROTTLE_IDLE_PWM });
+    stopThrottleSending();
+  };
+  d.throttleTrack.addEventListener("pointerup", endThrottle);
+  d.throttleTrack.addEventListener("pointercancel", endThrottle);
+  d.throttleTrack.addEventListener("pointerleave", (e) => { if (throttleDragging) endThrottle(e); });
+
+  updateThrottle();
+
   // ---- arm / disarm -------------------------------------------------------
   const resetArm = attachHoldToConfirm(d.btnArm, d.armFill, d.armLabel, 1500, () => {
     sendFrame({ type: "arm", on: true });
     setTimeout(() => resetArm && resetArm(), 2000);
   });
   d.btnDisarm.addEventListener("click", () => {
+    throttlePwm = THROTTLE_IDLE_PWM;
+    updateThrottle();
+    stopThrottleSending();
     sendFrame({ type: "arm", on: false });
   });
 

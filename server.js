@@ -1337,7 +1337,7 @@ app.get("/phone", (req, res) => {
 // MAVLink telemetry/command relay. HTTP polling is the Fly-safe path:
 // - Pi POSTs telemetry to /api/pi/<cam>/mavlink/uplink and receives queued commands.
 // - Browser GETs latest telemetry from /api/pi/<cam>/mavlink.
-// - Browser POSTs arm/yaw commands to /api/pi/<cam>/mavlink.
+// - Browser POSTs arm/yaw/throttle commands to /api/pi/<cam>/mavlink.
 // WebSockets are intentionally not used for the Fly path; Fly WebSocket
 // compression/proxying broke MAVLink frames in testing.
 const mavHttpState = new Map(); // cam -> { tele, teleAt, teleSeq, commands, nextCmdId }
@@ -1394,14 +1394,20 @@ app.post("/api/pi/:cam/mavlink", (req, res) => {
   const cam = String(req.params.cam || "").toLowerCase();
   const state = mavStateFor(cam);
   const command = req.body && typeof req.body === "object" ? req.body : {};
-  if (!["yaw", "arm"].includes(command.type)) {
+  if (!["yaw", "throttle", "arm"].includes(command.type)) {
     return res.status(400).json({ ok: false, error: "unsupported mavlink command" });
   }
-  const body = command.type === "yaw"
-    ? { type: "yaw", pwm: Math.max(1000, Math.min(2000, Math.round(Number(command.pwm) || 1500))) }
-    : { type: "arm", on: Boolean(command.on) };
+  const body = command.type === "arm"
+    ? { type: "arm", on: Boolean(command.on) }
+    : {
+        type: command.type,
+        pwm: Math.max(1000, Math.min(2000, Math.round(Number(command.pwm) || (command.type === "yaw" ? 1500 : 1000)))),
+      };
   if (body.type === "yaw") {
     state.commands = state.commands.filter((cmd) => cmd.body?.type !== "yaw");
+  }
+  if (body.type === "throttle") {
+    state.commands = state.commands.filter((cmd) => cmd.body?.type !== "throttle");
   }
   const id = state.nextCmdId++;
   state.commands.push({ id, ts: Date.now(), body });

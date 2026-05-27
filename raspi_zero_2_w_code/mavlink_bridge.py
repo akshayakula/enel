@@ -8,6 +8,7 @@ Wire protocol (JSON per frame):
 
   browser → bridge:
     {"type":"yaw", "pwm": 1000..2000}     # CH4 override, all others released
+    {"type":"throttle", "pwm": 1000..2000} # CH3 override, deadman-released
     {"type":"arm", "on": true | false}    # MAV_CMD_COMPONENT_ARM_DISARM
 
   bridge → browser (push, ~5 Hz):
@@ -19,9 +20,8 @@ Wire protocol (JSON per frame):
      "batt": {"v": 12.4, "a": 3.1, "pct": 74}}
 
 Safety:
-- Yaw deadman: if no {type:"yaw"} arrives within 250 ms the next override frame
-  sends CH4=0 (release). All other channels are ALWAYS 0 (released) — physical
-  TX still owns roll/pitch/throttle/CH5-8.
+- Yaw/throttle deadmen: if no matching command arrives within 250 ms the next
+  override frame releases that channel. Roll/pitch/CH5-8 are always released.
 - Arm requires a fresh heartbeat. The UI gates on this too, but we double-check.
 """
 from __future__ import annotations
@@ -53,6 +53,7 @@ RC_SEND_HZ    = 20        # RC_CHANNELS_OVERRIDE send rate
 TELE_HZ       = 5         # telemetry push rate to all WS clients
 HTTP_POLL_HZ  = int(os.environ.get("MAV_HTTP_POLL_HZ", "20"))
 YAW_DEADMAN_S = 0.25      # if no yaw update in this long → release CH4
+THR_DEADMAN_S = 0.25      # if no throttle update in this long → release CH3
 HB_FRESH_S    = 2.0       # heartbeat considered fresh within this window
 
 RELEASED = 0              # pymavlink RC override: 0 = release channel
@@ -62,6 +63,8 @@ _lock = threading.Lock()
 _state: dict[str, Any] = {
     "yaw_pwm":   1500,     # last commanded yaw PWM
     "yaw_ts":    0.0,      # monotonic() of last yaw frame
+    "thr_pwm":   1000,     # last commanded throttle PWM
+    "thr_ts":    0.0,      # monotonic() of last throttle frame
     "hb_ts":     0.0,      # monotonic() of last HEARTBEAT
     "mode":      "?",
     "armed":     False,
@@ -139,16 +142,18 @@ def mavlink_thread(stop: threading.Event, mav: mavutil.mavfile) -> None:
                     "pct": msg.battery_remaining if msg.battery_remaining >= 0 else None,
                 })
 
-        # 2. RC override at 20 Hz. CH4 carries our yaw; all others released.
+        # 2. RC override at 20 Hz. CH3/CH4 carry active deadman commands.
         now = time.monotonic()
         if now >= next_rc:
             snap = _snap()
-            fresh = (now - snap["yaw_ts"]) < YAW_DEADMAN_S
-            yaw   = int(snap["yaw_pwm"]) if fresh else RELEASED
+            yaw_fresh = (now - snap["yaw_ts"]) < YAW_DEADMAN_S
+            thr_fresh = (now - snap["thr_ts"]) < THR_DEADMAN_S
+            yaw = int(snap["yaw_pwm"]) if yaw_fresh else RELEASED
+            thr = int(snap["thr_pwm"]) if thr_fresh else RELEASED
             try:
                 mav.mav.rc_channels_override_send(
                     snap["target_sys"], snap["target_cmp"],
-                    RELEASED, RELEASED, RELEASED, yaw,
+                    RELEASED, RELEASED, thr, yaw,
                     RELEASED, RELEASED, RELEASED, RELEASED,
                 )
             except Exception:
@@ -191,12 +196,21 @@ def apply_command(mav: mavutil.mavfile, msg: dict):
             return None
         _set(yaw_pwm=max(1000, min(2000, pwm)), yaw_ts=time.monotonic())
         return None
+    if t == "throttle":
+        try:
+            pwm = int(msg.get("pwm", 1000))
+        except (TypeError, ValueError):
+            return None
+        _set(thr_pwm=max(1000, min(2000, pwm)), thr_ts=time.monotonic())
+        return None
     if t == "arm":
         on = bool(msg.get("on"))
         # Require fresh heartbeat to allow ARM. DISARM always allowed.
         if on and (time.monotonic() - _snap()["hb_ts"] > HB_FRESH_S):
             return {"type": "err", "msg": "no heartbeat; arm refused"}
         try:
+            if not on:
+                _set(thr_pwm=1000, thr_ts=0.0, yaw_pwm=1500, yaw_ts=0.0)
             send_arm(mav, on)
             return {"type": "ack", "action": "arm" if on else "disarm"}
         except Exception as e:
