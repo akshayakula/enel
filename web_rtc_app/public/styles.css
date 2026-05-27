@@ -236,13 +236,16 @@ body.booted  > main.flow-page {
 }
 
 .pill {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 28px;
   padding: 5px 8px;
   background: transparent;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 0.78rem;
+  line-height: 1.2;
   border: 1px solid var(--line-2);
   border-radius: 2px;
   font-variant-numeric: tabular-nums;
@@ -261,7 +264,7 @@ body.booted  > main.flow-page {
   min-height: 30px;
   padding: 4px 10px;
   font-size: 0.72rem;
-  line-height: 1;
+  line-height: 1.2;
   letter-spacing: 0.04em;
   text-align: center;
   text-transform: lowercase;
@@ -300,7 +303,7 @@ body.booted  > main.flow-page {
   pointer-events: auto;
   flex: 0 0 auto;
   min-width: 64px;
-  min-height: 28px;
+  min-height: 30px;
   padding: 4px 9px;
   border-color: rgba(182, 210, 109, 0.48);
   background: rgba(5, 7, 10, 0.78);
@@ -512,15 +515,19 @@ body.demo-mode .cam-nosig { display: none !important; }
 }
 
 .ctrl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 1;
   min-width: 0;
-  min-height: 28px;
+  min-height: 30px;
   border: 1px solid var(--line-2);
   background: transparent;
   color: var(--muted);
-  padding: 4px 8px;
+  padding: 5px 9px;
   font-family: var(--mono);
   font-size: 0.72rem;
+  line-height: 1.2;
   cursor: pointer;
   border-radius: 2px;
   text-align: center;
@@ -569,9 +576,12 @@ body.demo-mode .cam-nosig { display: none !important; }
 .ctrl-btn-hold-label {
   position: relative;
   z-index: 1;
-  padding: 4px 10px;
-  display: block;
+  padding: 5px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 100%;
+  min-height: 30px;
   text-align: center;
   font-family: var(--mono);
   font-size: inherit;
@@ -1549,9 +1559,10 @@ body.demo-mode .cam-nosig { display: none !important; }
 }
 .mm-action-btn {
   flex: 0 0 auto;
-  min-height: 26px;
-  padding: 3px 8px;
+  min-height: 30px;
+  padding: 5px 9px;
   font-size: 0.68rem;
+  line-height: 1.2;
   color: var(--muted);
 }
 .mini-map-section { position: relative; }
@@ -1588,7 +1599,7 @@ body.demo-mode .cam-nosig { display: none !important; }
 .mm-hud {
   position: absolute;
   right: 8px;
-  top: 6px;
+  bottom: 8px;
   color: var(--dim);
   font-family: var(--mono);
   font-size: 0.7rem;
@@ -2105,11 +2116,13 @@ body.phone-publisher {
   align-content: center;
   gap: 4px;
   text-align: left;
+  line-height: 1.25;
   transition: color 140ms ease, border-color 140ms ease, background 140ms ease, transform 140ms ease;
 }
 .phone-slot-button span {
   color: var(--text);
   font-size: 0.86rem;
+  overflow-wrap: anywhere;
 }
 .phone-slot-button small {
   color: var(--dim);
@@ -2176,6 +2189,7 @@ body.phone-publisher {
   background: rgba(200, 74, 61, 0.08);
   color: #ff9b90;
   font: inherit;
+  line-height: 1.2;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;
@@ -2198,13 +2212,14 @@ body.phone-publisher {
 .phone-compass-btn {
   flex: 0 0 auto;
   min-height: 34px;
-  padding: 0 12px;
+  padding: 5px 12px;
   border: 1px solid rgba(111, 208, 197, 0.55);
   border-radius: 5px;
   background: rgba(111, 208, 197, 0.08);
   color: var(--cyan);
   font: inherit;
   font-size: 0.68rem;
+  line-height: 1.2;
   letter-spacing: 0.1em;
   text-transform: uppercase;
 }
