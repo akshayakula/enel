@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """enel mavlink-bridge: single-cam (cam1) drone link.
 
-Holds one UART connection to the flight controller and exposes a WebSocket on
-port 8090. The laptop's Express server proxies /api/pi/cam1/mavlink → this port.
+Holds one UART connection to the flight controller, exposes a LAN WebSocket on
+port 8090, and dials the Fly dashboard over HTTP polling for cloud telemetry.
 
 Wire protocol (JSON per frame):
 
@@ -34,6 +34,8 @@ import sys
 import threading
 import time
 from typing import Any
+import urllib.error
+import urllib.request
 
 from pymavlink import mavutil
 import websockets
@@ -41,13 +43,15 @@ import websockets
 SERIAL_DEV    = os.environ.get("MAV_DEV",  "/dev/ttyAMA0")
 SERIAL_BAUD   = int(os.environ.get("MAV_BAUD", "921600"))
 WS_PORT       = int(os.environ.get("MAV_WS_PORT", "8090"))
-# Fly uplink: the Pi is behind NAT, so it CONNECTS OUT to the server and pushes
-# telemetry / receives arm+yaw commands. Set MAV_UPLINK_URL="" to disable.
+# Fly uplink: the Pi is behind NAT, so it CONNECTS OUT to the server. HTTP is
+# the default because Fly's HTTP proxy mangles WebSocket RSV bits for this path.
+# Set MAV_UPLINK_URL="" to disable. ws:// URLs are still supported for LAN tests.
 UPLINK_URL    = os.environ.get("MAV_UPLINK_URL",
-                               "wss://enel-stream.fly.dev/api/pi/cam1/mavlink/uplink")
+                               "https://enel-stream.fly.dev/api/pi/cam1/mavlink/uplink")
 
 RC_SEND_HZ    = 20        # RC_CHANNELS_OVERRIDE send rate
 TELE_HZ       = 5         # telemetry push rate to all WS clients
+HTTP_POLL_HZ  = int(os.environ.get("MAV_HTTP_POLL_HZ", "20"))
 YAW_DEADMAN_S = 0.25      # if no yaw update in this long → release CH4
 HB_FRESH_S    = 2.0       # heartbeat considered fresh within this window
 
@@ -200,6 +204,19 @@ def apply_command(mav: mavutil.mavfile, msg: dict):
     return None
 
 
+def post_http_uplink(url: str, payload: dict) -> dict:
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=3) as res:
+        raw = res.read()
+    return json.loads(raw.decode("utf-8") or "{}")
+
+
 # ---------- WebSocket server -------------------------------------------------
 async def tele_pusher(ws) -> None:
     period = 1.0 / TELE_HZ
@@ -237,9 +254,8 @@ async def serve(mav: mavutil.mavfile) -> None:
         await asyncio.Future()  # run forever
 
 
-async def uplink(mav: mavutil.mavfile) -> None:
-    """Outbound link to the Fly dashboard: push telemetry, receive arm/yaw.
-    The Pi is behind NAT, so it dials OUT and keeps reconnecting."""
+async def ws_uplink(mav: mavutil.mavfile) -> None:
+    """Outbound WebSocket link for LAN tests only."""
     if not UPLINK_URL:
         return
     while True:
@@ -277,6 +293,50 @@ async def uplink(mav: mavutil.mavfile) -> None:
         except Exception as e:
             print(f"[mavlink_bridge] uplink down ({e}); retry in 5s", flush=True)
         await asyncio.sleep(5)
+
+
+async def http_uplink(mav: mavutil.mavfile) -> None:
+    """Fly-safe outbound link: POST latest telemetry, receive queued commands."""
+    if not UPLINK_URL:
+        return
+    period = 1.0 / max(1, HTTP_POLL_HZ)
+    last_cmd_id = 0
+    printed_up = False
+    while True:
+        payload = build_tele()
+        payload["after"] = last_cmd_id
+        try:
+            resp = await asyncio.to_thread(post_http_uplink, UPLINK_URL, payload)
+            if not printed_up:
+                print(f"[mavlink_bridge] http uplink connected -> {UPLINK_URL}", flush=True)
+                printed_up = True
+            for item in resp.get("commands") or []:
+                try:
+                    cmd_id = int(item.get("id") or 0)
+                except (TypeError, ValueError):
+                    cmd_id = 0
+                if cmd_id <= last_cmd_id:
+                    continue
+                body = item.get("body") if isinstance(item, dict) else None
+                if isinstance(body, dict):
+                    apply_command(mav, body)
+                if cmd_id:
+                    last_cmd_id = max(last_cmd_id, cmd_id)
+        except Exception as e:
+            if printed_up:
+                print(f"[mavlink_bridge] http uplink down ({e}); retrying", flush=True)
+            printed_up = False
+            await asyncio.sleep(1.0)
+        await asyncio.sleep(period)
+
+
+async def uplink(mav: mavutil.mavfile) -> None:
+    if not UPLINK_URL:
+        return
+    if UPLINK_URL.startswith(("ws://", "wss://")):
+        await ws_uplink(mav)
+    else:
+        await http_uplink(mav)
 
 
 async def run_all(mav: mavutil.mavfile) -> None:

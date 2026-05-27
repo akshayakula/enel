@@ -195,8 +195,9 @@ app.get("/api/command/:cam", (req, res) => {
 
 // Proxy a narrow set of pi-control endpoints per cam id.
 // Example: POST /api/pi/cam1/ring/identify  -> http://pi-cam-1.local:8088/ring/identify
-app.all("/api/pi/:id/:path(*)", async (req, res) => {
+app.all("/api/pi/:id/:path(*)", async (req, res, next) => {
   const { id, path: subPath } = req.params;
+  if (String(subPath || "").startsWith("mavlink")) return next();
   if (!STREAM_SLOTS.includes(id)) {
     return res.status(404).json({ error: "unknown cam" });
   }
@@ -1348,10 +1349,80 @@ app.get("/phone", (req, res) => {
   res.redirect(302, `/iphone-safari${query}`);
 });
 
-// MAVLink relay — the air-unit Pi is behind NAT, so it CONNECTS OUT to us at
-// /api/pi/<cam>/mavlink/uplink and pushes telemetry; browsers connect to
-// /api/pi/<cam>/mavlink to read telemetry + send arm/yaw. We relay between the
-// two. Works identically on LAN and Fly (no inbound reach to the Pi needed).
+// MAVLink telemetry/command relay. HTTP polling is the Fly-safe path:
+// - Pi POSTs telemetry to /api/pi/<cam>/mavlink/uplink and receives queued commands.
+// - Browser GETs latest telemetry from /api/pi/<cam>/mavlink.
+// - Browser POSTs arm/yaw commands to /api/pi/<cam>/mavlink.
+// The old WebSocket relay is left below for LAN-only bench testing.
+const mavHttpState = new Map(); // cam -> { tele, teleAt, teleSeq, commands, nextCmdId }
+
+function mavStateFor(cam) {
+  let state = mavHttpState.get(cam);
+  if (!state) {
+    state = { tele: null, teleAt: 0, teleSeq: 0, commands: [], nextCmdId: 1 };
+    mavHttpState.set(cam, state);
+  }
+  return state;
+}
+
+function pruneMavCommands(state) {
+  const cutoff = Date.now() - 10000;
+  state.commands = state.commands.filter((cmd) => cmd.ts >= cutoff).slice(-80);
+}
+
+app.post("/api/pi/:cam/mavlink/uplink", (req, res) => {
+  const cam = String(req.params.cam || "").toLowerCase();
+  const state = mavStateFor(cam);
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  if (body.type === "tele") {
+    state.tele = body;
+    state.teleAt = Date.now();
+    state.teleSeq += 1;
+  }
+
+  const after = Math.max(0, Number(body.after ?? req.query.after ?? 0) || 0);
+  pruneMavCommands(state);
+  const commands = state.commands
+    .filter((cmd) => cmd.id > after)
+    .map((cmd) => ({ id: cmd.id, body: cmd.body }));
+  res.json({ ok: true, seq: state.teleSeq, commands });
+});
+
+app.get("/api/pi/:cam/mavlink", (req, res) => {
+  const cam = String(req.params.cam || "").toLowerCase();
+  const state = mavStateFor(cam);
+  const ageMs = state.teleAt ? Date.now() - state.teleAt : null;
+  if (!state.tele || ageMs == null || ageMs > 5000) {
+    return res.json({
+      ok: true,
+      type: "status",
+      link: state.tele ? "stale" : "down",
+      ageMs,
+      msg: state.tele ? "air unit stale" : "air unit offline",
+    });
+  }
+  res.json({ ok: true, ...state.tele, ageMs, seq: state.teleSeq });
+});
+
+app.post("/api/pi/:cam/mavlink", (req, res) => {
+  const cam = String(req.params.cam || "").toLowerCase();
+  const state = mavStateFor(cam);
+  const command = req.body && typeof req.body === "object" ? req.body : {};
+  if (!["yaw", "arm"].includes(command.type)) {
+    return res.status(400).json({ ok: false, error: "unsupported mavlink command" });
+  }
+  const body = command.type === "yaw"
+    ? { type: "yaw", pwm: Math.max(1000, Math.min(2000, Math.round(Number(command.pwm) || 1500))) }
+    : { type: "arm", on: Boolean(command.on) };
+  if (body.type === "yaw") {
+    state.commands = state.commands.filter((cmd) => cmd.body?.type !== "yaw");
+  }
+  const id = state.nextCmdId++;
+  state.commands.push({ id, ts: Date.now(), body });
+  pruneMavCommands(state);
+  res.json({ ok: true, id });
+});
+
 const mavUplinks = new Map(); // cam -> ws (the Pi)
 const mavClients = new Map(); // cam -> Set<ws> (browsers)
 const mavWss = new WebSocketServer({ noServer: true, perMessageDeflate: false });

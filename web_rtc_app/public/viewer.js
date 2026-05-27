@@ -499,48 +499,21 @@ function buildHeadingTape() {
 }
 
 function wireDroneSocket(streamId, d) {
-  const YAW_SEND_HZ = 25;
+  const YAW_SEND_HZ = 20;
   const YAW_CENTER_PWM = 1500;
   const YAW_MIN = 1000, YAW_MAX = 2000;
 
-  let ws = null;
-  let wsOpen = false;
   let yawPwm = YAW_CENTER_PWM;
   let yawDragging = false;
   let yawSendTimer = null;
-  let reconnectTimer = null;
   let lastTeleTs = 0;
-
-  // ---- WebSocket plumbing -------------------------------------------------
-  const wsUrl = () => {
-    const proto = location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${location.host}/api/pi/${streamId}/mavlink`;
-  };
+  let pollBusy = false;
 
   const setLink = (state) => {
     d.linkPill.classList.remove("ok", "err", "stale");
     if (state === "ok")    { d.linkPill.textContent = "link up";      d.linkPill.classList.add("ok"); }
     else if (state === "stale") { d.linkPill.textContent = "link stale"; d.linkPill.classList.add("stale"); }
     else                   { d.linkPill.textContent = "link down";    d.linkPill.classList.add("err"); }
-  };
-
-  const connect = () => {
-    if (ws) try { ws.close(); } catch {}
-    setLink("err");
-    ws = new WebSocket(wsUrl());
-    ws.onopen = () => { wsOpen = true; setLink("ok"); };
-    ws.onmessage = (ev) => {
-      let msg;
-      try { msg = JSON.parse(ev.data); } catch { return; }
-      if (msg.type === "tele") applyTele(msg);
-    };
-    ws.onclose = () => {
-      wsOpen = false;
-      setLink("err");
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(connect, 1500);
-    };
-    ws.onerror = () => { try { ws.close(); } catch {} };
   };
 
   const applyTele = (t) => {
@@ -610,9 +583,30 @@ function wireDroneSocket(streamId, d) {
     });
   };
 
-  const sendFrame = (obj) => {
-    if (!wsOpen || !ws || ws.readyState !== WebSocket.OPEN) return;
-    try { ws.send(JSON.stringify(obj)); } catch {}
+  const pollTele = async () => {
+    if (pollBusy) return;
+    pollBusy = true;
+    try {
+      const res = await fetch(`/api/pi/${streamId}/mavlink`, { cache: "no-store" });
+      const msg = await res.json();
+      if (!res.ok || !msg.ok) throw new Error(msg.error || `http ${res.status}`);
+      if (msg.type === "tele") applyTele(msg);
+      else setLink(msg.link === "stale" ? "stale" : "err");
+    } catch {
+      setLink("err");
+    } finally {
+      pollBusy = false;
+    }
+  };
+
+  const sendFrame = async (obj) => {
+    try {
+      await fetch(`/api/pi/${streamId}/mavlink`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(obj),
+      });
+    } catch {}
   };
 
   // ---- yaw stick interaction ---------------------------------------------
@@ -694,7 +688,6 @@ function wireDroneSocket(streamId, d) {
 
   // Stale-link detection (no tele for 3s → orange).
   setInterval(() => {
-    if (!wsOpen) return;
     if (Date.now() - lastTeleTs > 3000) setLink("stale");
   }, 1000);
 
@@ -729,7 +722,9 @@ function wireDroneSocket(streamId, d) {
     return true;
   };
 
-  connect();
+  setLink("err");
+  pollTele();
+  setInterval(pollTele, 500);
 }
 
 function hexToRgb(hex) {
