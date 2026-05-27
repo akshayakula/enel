@@ -33,6 +33,7 @@
           <div class="hdr-expand mono">edge-networked environment lattice</div>
         </div>
         <div class="hdr-right">
+          <a class="ctrl-btn hdr-btn mono" id="btnPhone" href="/phone-publish" title="Use this device as a phone camera publisher">phone</a>
           <button class="ctrl-btn hdr-btn mono" id="btnSitrep" title="Fuse all live feeds into a single report">sitrep</button>
           <button class="ctrl-btn hdr-btn mono" id="btnSwarm" title="Issue natural-language swarm orders">swarm</button>
           <button class="ctrl-btn hdr-btn mono" id="btnGps" title="Request browser geolocation">gps</button>
@@ -80,10 +81,16 @@
           <div class="splat-node" id="splatNode">
             <div class="splat-label mono">fusion</div>
             <div class="splat-meta mono"><span id="splatLinkCount">0/4</span></div>
-            <button class="ctrl-btn mono fusion-scan-btn" id="btnFusionScan"
-                    title="Record 15 s per live cam, concat, send to Kiri Engine for 3D reconstruction">
-              begin mapping
-            </button>
+            <div class="fusion-actions">
+              <button class="ctrl-btn mono fusion-scan-btn" id="btnFusionScan"
+                      title="Record live cameras, send to Lambda, and load the finished splat">
+                begin mapping
+              </button>
+              <button class="ctrl-btn mono fusion-reset-btn" id="btnFusionReset"
+                      title="Cancel the active room mapping and start fresh">
+                reset
+              </button>
+            </div>
             <div class="fusion-scan-status mono" id="fusionScanStatus" style="display:none"></div>
           </div>
         </div>
@@ -114,6 +121,19 @@
                   src="/splat/?url=/scenes/3DGS.ply"
                   title="gaussian splat viewer"
                   allow="xr-spatial-tracking; gamepad; fullscreen"></iframe>
+        </div>
+      </section>
+
+      <section class="sessions-section">
+        <div class="sessions-head">
+          <div class="sessions-left">
+            <span class="sessions-title mono">mapping sessions</span>
+            <span class="sessions-count mono" id="sessionCount">0</span>
+          </div>
+          <button class="ctrl-btn mono" id="btnSessionsRefresh" title="Refresh mapping sessions">refresh</button>
+        </div>
+        <div class="session-list" id="sessionList">
+          <div class="session-empty mono">loading sessions…</div>
         </div>
       </section>
 

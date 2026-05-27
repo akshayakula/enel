@@ -26,6 +26,16 @@ function el(tag, cls, text) {
   return n;
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  })[ch]);
+}
+
 // Press-and-hold confirm. Holding the button for `durationMs` fires `onCommit`.
 // Release before that cancels. Used for destructive actions so we can skip
 // browser confirm() popups.
@@ -1785,26 +1795,32 @@ function executeSwarmPlan(plan, actionsEl) {
 wireSwarmChrome();
 
 // ---------------------------------------------------------------------------
-// Kiri "gather mapping data" — record 15 s per live cam via MediaRecorder,
-// upload to /api/kiri/scan/start (server concats + ships to Kiri /3dgs/video),
-// poll for status, then swap the splat iframe to the finished PLY.
+// Lambda "gather mapping data" — record live cams via MediaRecorder, upload
+// the per-cam clips to a durable session, then poll the Lambda splat job.
 // ---------------------------------------------------------------------------
-const KIRI_SCAN_SECONDS = 15;
-const KIRI_POLL_MS = 6000;
-let kiriBusy = false;
+const LAMBDA_SCAN_SECONDS = 90;
+const LAMBDA_POLL_MS = 5000;
+let fusionBusy = false;
+let activeFusionSessionId = null;
+let fusionRunToken = 0;
 
 function wireFusionScan() {
   const btn = document.getElementById("btnFusionScan");
+  const reset = document.getElementById("btnFusionReset");
   const statusEl = document.getElementById("fusionScanStatus");
   if (!btn || !statusEl) return;
   btn.addEventListener("click", () => {
-    if (kiriBusy) return;
+    if (fusionBusy) return;
     startFusionScan(btn, statusEl).catch((err) => {
       setFusionStatus(statusEl, `failed: ${err.message || err}`, "err");
       btn.disabled = false; btn.textContent = "begin mapping";
-      kiriBusy = false;
+      fusionBusy = false;
+      loadSessions();
     });
   });
+  if (reset) {
+    reset.addEventListener("click", () => resetFusionSession(btn, statusEl));
+  }
 }
 
 function setFusionStatus(el, text, state) {
@@ -1816,55 +1832,98 @@ function setFusionStatus(el, text, state) {
 
 async function startFusionScan(btn, statusEl) {
   const ready = STREAM_IDS.filter((id) => readyState.get(id) && cams.get(id));
-  if (!ready.length) throw new Error("no live cams");
+  if (ready.length < 2) throw new Error("at least two live cams required");
 
-  kiriBusy = true;
+  fusionBusy = true;
+  const runToken = ++fusionRunToken;
   btn.disabled = true;
 
-  // 1) Record each live cam in parallel.
-  setFusionStatus(statusEl, `recording ${KIRI_SCAN_SECONDS}s · ${ready.length} cam${ready.length > 1 ? "s" : ""}…`, "working");
-  const recordings = await Promise.all(ready.map((id) => recordCamClip(id, KIRI_SCAN_SECONDS * 1000)));
-
-  // 2) Assemble multipart and POST. Show upload pending.
-  btn.textContent = "uploading…";
-  setFusionStatus(statusEl, "uploading to kiri…", "working");
-  const fd = new FormData();
-  recordings.forEach(({ id, blob }) => {
-    const ext = blob.type.includes("mp4") ? "mp4" : "webm";
-    fd.append(id, blob, `${id}.${ext}`);
+  // Server-side capture reads the MediaMTX paths directly, so Pi RTSP and
+  // phone WHIP publishers both enter Lambda through the same cam slots.
+  btn.textContent = "recording…";
+  setFusionStatus(statusEl, `recording ${LAMBDA_SCAN_SECONDS}s from MediaMTX · ${ready.length} cams`, "working");
+  const startRes = await fetch("/api/sessions/lambda/record-start", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      title: `Mapping ${new Date().toLocaleString()}`,
+      durationSeconds: LAMBDA_SCAN_SECONDS,
+      cams: ready,
+      options: {
+        iterations: 1000,
+        timestampsPerFeed: 2,
+        maxImages: 12,
+        keepWarm: true,
+      },
+    }),
   });
-  const startRes = await fetch("/api/kiri/scan/start", { method: "POST", body: fd });
   const startBody = await startRes.json().catch(() => ({}));
   if (!startRes.ok || startBody.error) throw new Error(startBody.error || `http ${startRes.status}`);
-  const sid = startBody.sid;
+  const sessionId = startBody.session?.id;
+  if (!sessionId) throw new Error("session id missing");
+  activeFusionSessionId = sessionId;
+  renderSessions([startBody.session], true);
 
-  // 3) Poll status. Kiri codes: -1 uploading, 0 processing, 1 failed, 2 success, 3 queuing, 4 expired.
+  // Poll durable session status until the Lambda job lands a viewer splat.
   btn.textContent = "processing…";
-  const labels = { "-1": "kiri uploading", 0: "processing", 1: "failed", 2: "done", 3: "queued", 4: "expired" };
   while (true) {
-    await new Promise((r) => setTimeout(r, KIRI_POLL_MS));
-    const r = await fetch(`/api/kiri/scan/${sid}/status`);
+    await new Promise((r) => setTimeout(r, LAMBDA_POLL_MS));
+    if (runToken !== fusionRunToken || activeFusionSessionId !== sessionId) return;
+    const r = await fetch(`/api/sessions/${sessionId}`);
     const body = await r.json().catch(() => ({}));
-    const code = body.status;
-    const label = labels[code] ?? `code ${code}`;
-    const elapsed = Math.round((Date.now() - (body.raw?.data?.createTime ? 0 : 0)) / 1000);
-    setFusionStatus(statusEl, `kiri · ${label}${code === 0 || code === 3 ? " (this takes minutes)" : ""}`, "working");
-    if (code === 2) break;
-    if (code === 1) throw new Error("kiri processing failed");
-    if (code === 4) throw new Error("kiri expired");
+    const session = body.session;
+    if (!r.ok || body.error || !session) throw new Error(body.error || `http ${r.status}`);
+    const label = session.status || "processing";
+    const progress = session.progress?.label || label;
+    setFusionStatus(statusEl, `lambda · ${progress}`, "working");
+    renderSessions([session], true);
+    if (session.status === "completed" && session.splatUrl) {
+      activeFusionSessionId = null;
+      loadSplatUrl(session.splatUrl, session.title || session.id);
+      setFusionStatus(statusEl, `scan ready · ${session.id}`, "ok");
+      break;
+    }
+    if (session.status === "failed") {
+      activeFusionSessionId = null;
+      throw new Error(session.error || "lambda reconstruction failed");
+    }
+    if (session.status === "cancelled") {
+      activeFusionSessionId = null;
+      setFusionStatus(statusEl, "room reset · ready", "ok");
+      break;
+    }
   }
 
-  // 4) Fetch & extract PLY, then swap the splat viewer to it.
-  btn.textContent = "finalizing…";
-  setFusionStatus(statusEl, "downloading ply…", "working");
-  const fetchRes = await fetch(`/api/kiri/scan/${sid}/fetch`, { method: "POST" });
-  const fetchBody = await fetchRes.json().catch(() => ({}));
-  if (!fetchRes.ok || fetchBody.error) throw new Error(fetchBody.error || `http ${fetchRes.status}`);
-  loadSplatUrl(fetchBody.plyUrl, `kiri-${sid}`);
-  setFusionStatus(statusEl, `scan ready · kiri-${sid}`, "ok");
   btn.disabled = false;
   btn.textContent = "begin mapping";
-  kiriBusy = false;
+  fusionBusy = false;
+  loadSessions();
+}
+
+async function resetFusionSession(btn, statusEl) {
+  const sessionId = activeFusionSessionId;
+  fusionRunToken++;
+  activeFusionSessionId = null;
+  fusionBusy = false;
+  if (btn) {
+    btn.disabled = false;
+    btn.textContent = "begin mapping";
+  }
+  setFusionStatus(statusEl, "room reset · ready", "ok");
+  if (sessionId) {
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/cancel`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ reason: "reset by operator" }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (body.session) renderSessions([body.session], true);
+    } catch (err) {
+      console.warn("session reset failed", err);
+    }
+  }
+  loadSessions();
 }
 
 function recordCamClip(camId, durationMs) {
@@ -1905,7 +1964,76 @@ function loadSplatUrl(url, sceneName) {
   if (nameEl && sceneName) nameEl.textContent = sceneName;
 }
 
+function renderSessions(seedSessions, merge = false) {
+  const list = document.getElementById("sessionList");
+  const count = document.getElementById("sessionCount");
+  if (!list) return;
+
+  let sessions = Array.isArray(seedSessions) ? seedSessions : [];
+  if (merge && list._sessions) {
+    const byId = new Map(list._sessions.map((session) => [session.id, session]));
+    sessions.forEach((session) => byId.set(session.id, session));
+    sessions = [...byId.values()].sort((a, b) => String(b.createdAt || b.id).localeCompare(String(a.createdAt || a.id)));
+  }
+  list._sessions = sessions;
+  if (count) count.textContent = `${sessions.length}`;
+
+  if (!sessions.length) {
+    list.innerHTML = '<div class="session-empty mono">no mapping sessions yet</div>';
+    return;
+  }
+
+  list.innerHTML = sessions.map((session) => {
+    const cams = Array.isArray(session.cams) ? session.cams.join(", ") : "";
+    const when = session.createdAt ? new Date(session.createdAt).toLocaleString() : "";
+    const status = session.status || "unknown";
+    const progress = session.progress?.label || session.error || "";
+    const tail = Array.isArray(session.progress?.tail) ? session.progress.tail.slice(-4) : [];
+    const open = session.splatUrl
+      ? `<button class="ctrl-btn mono session-open" data-url="${escapeHtml(session.splatUrl)}" data-name="${escapeHtml(session.title || session.id)}">open</button>`
+      : "";
+    const log = tail.length
+      ? `<div class="session-log mono">${tail.map((event) => `<span>${escapeHtml(event.msg)}</span>`).join("")}</div>`
+      : "";
+    return `
+      <article class="session-row ${escapeHtml(status)}">
+        <div class="session-main">
+          <strong>${escapeHtml(session.title || session.id)}</strong>
+          <span>${escapeHtml(when)} · ${escapeHtml(cams)}</span>
+          ${progress ? `<em>${escapeHtml(progress)}</em>` : ""}
+          ${log}
+        </div>
+        <span class="session-status mono">${escapeHtml(status)}</span>
+        ${open}
+      </article>`;
+  }).join("");
+
+  for (const button of list.querySelectorAll(".session-open")) {
+    button.addEventListener("click", () => loadSplatUrl(button.dataset.url, button.dataset.name));
+  }
+}
+
+async function loadSessions() {
+  const list = document.getElementById("sessionList");
+  if (!list) return;
+  try {
+    const res = await fetch("/api/sessions");
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.error) throw new Error(body.error || `http ${res.status}`);
+    renderSessions(body.sessions || []);
+  } catch (err) {
+    list.innerHTML = `<div class="session-empty mono">${escapeHtml(err.message || err)}</div>`;
+  }
+}
+
+function wireSessionHistory() {
+  const refresh = document.getElementById("btnSessionsRefresh");
+  if (refresh) refresh.addEventListener("click", loadSessions);
+  loadSessions();
+}
+
 wireFusionScan();
+wireSessionHistory();
 
 // ---------------------------------------------------------------------------
 // Splat free-look — just a reload button on the existing iframe.

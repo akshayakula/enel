@@ -5,6 +5,7 @@ const https = require("https");
 const os = require("os");
 const crypto = require("crypto");
 const { spawn } = require("child_process");
+const { pipeline: streamPipeline } = require("stream/promises");
 const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const Busboy = require("busboy");
@@ -29,10 +30,12 @@ const app = express();
 
 const PORT = Number(process.env.PORT || 3000);
 const HTTP_REDIRECT_PORT = Number(process.env.HTTP_REDIRECT_PORT || 3001);
+const USE_HTTPS = process.env.ENEL_HTTPS !== "0";
 const PUBLIC_DIR = path.join(__dirname, "web_rtc_app", "public");
 const CERT_DIR = path.join(__dirname, "certs");
 const CERT_PATH = path.join(CERT_DIR, "dev-cert.pem");
 const KEY_PATH = path.join(CERT_DIR, "dev-key.pem");
+const DATA_DIR = path.resolve(process.env.DATA_DIR || __dirname);
 const GAUSSIAN_SPLATS_BUILD_DIR = path.join(
   __dirname,
   "node_modules",
@@ -42,20 +45,43 @@ const GAUSSIAN_SPLATS_BUILD_DIR = path.join(
 );
 const THREE_BUILD_DIR = path.join(__dirname, "node_modules", "three", "build");
 const SPLAT_PKG_DIR = path.join(__dirname, "video_to_gaussian_splat");
-const SPLAT_WORKSPACES_DIR = path.join(SPLAT_PKG_DIR, "workspaces");
+const SPLAT_WORKSPACES_DIR = path.resolve(
+  process.env.SPLAT_WORKSPACES_DIR || path.join(SPLAT_PKG_DIR, "workspaces"),
+);
 const SPLAT_PYTHON = process.env.SPLAT_PYTHON
   || path.join(SPLAT_PKG_DIR, ".venv", "bin", "python");
-const RECORDINGS_DIR = path.join(__dirname, "recordings");
-const EXPORTS_DIR = path.join(__dirname, "exports", "compiled");
+const RECORDINGS_DIR = path.resolve(process.env.RECORDINGS_DIR || path.join(__dirname, "recordings"));
+const EXPORTS_DIR = path.resolve(process.env.EXPORTS_DIR || path.join(__dirname, "exports", "compiled"));
+const SCENES_DIR = path.resolve(process.env.SCENES_DIR || path.join(DATA_DIR, "scenes"));
+const SESSIONS_DIR = path.resolve(process.env.SESSIONS_DIR || path.join(DATA_DIR, "sessions"));
+const SESSION_INDEX_PATH = path.join(SESSIONS_DIR, "index.json");
+const MEDIAMTX_API_BASE = (process.env.MEDIAMTX_API_BASE || "http://127.0.0.1:9997").replace(/\/$/, "");
+const MEDIAMTX_RTSP_BASE = process.env.MEDIAMTX_RTSP_BASE || "rtsp://127.0.0.1:8554";
+const DEFAULT_CAPTURE_SECONDS = Number(process.env.LAMBDA_CAPTURE_SECONDS || 90);
+const DEFAULT_SPLAT_KEEP_WARM = process.env.SPLAT_KEEP_WARM === "1";
 const splatJobs = new Map(); // jobId -> { proc, startedAt, workspace, inputPaths }
+
+for (const dir of [DATA_DIR, SCENES_DIR, SESSIONS_DIR, SPLAT_WORKSPACES_DIR]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
 
 app.use(express.static(PUBLIC_DIR));
 app.use(express.json({ limit: "8mb" }));
 app.use("/vendor/gaussian-splats-3d", express.static(GAUSSIAN_SPLATS_BUILD_DIR));
 app.use("/vendor/three", express.static(THREE_BUILD_DIR));
+app.use(
+  "/scenes",
+  express.static(SCENES_DIR, {
+    setHeaders(res, filePath) {
+      if ([".splat", ".ksplat", ".ply", ".spz"].includes(path.extname(filePath).toLowerCase())) {
+        res.setHeader("Content-Type", "application/octet-stream");
+      }
+    },
+  }),
+);
 
 app.get("/health", (_req, res) => {
-  res.json({ ok: true, protocol: "https" });
+  res.json({ ok: true, protocol: USE_HTTPS ? "https" : "http" });
 });
 
 const STREAM_SLOTS = ["cam1", "cam2", "cam3", "cam4"];
@@ -64,30 +90,33 @@ const PI_CONTROL_PORT = 8088;
 const PI_CONTROL_TIMEOUT_MS = 3000;
 const piHostForSlot = (slot) => `pi-${slot}.local`;
 
+async function currentStreamSlots() {
+  const response = await fetch(`${MEDIAMTX_API_BASE}/v3/paths/list`);
+  if (!response.ok) {
+    throw makeHttpError(502, `mediamtx api ${response.status}`);
+  }
+  const body = await response.json();
+  const byName = new Map((body.items || []).map((p) => [p.name, p]));
+  return STREAM_SLOTS.map((id) => {
+    const p = byName.get(id);
+    if (!p) return { id, ready: false };
+    return {
+      id,
+      ready: Boolean(p.ready),
+      readers: Array.isArray(p.readers) ? p.readers.length : 0,
+      tracks: p.tracks || [],
+      bytesReceived: p.bytesReceived ?? null,
+      bytesSent: p.bytesSent ?? null,
+      readyTime: p.readyTime ?? null,
+    };
+  });
+}
+
 app.get("/api/state", async (_req, res) => {
   try {
-    const response = await fetch("http://127.0.0.1:9997/v3/paths/list");
-    if (!response.ok) {
-      return res.status(502).json({ error: `mediamtx api ${response.status}` });
-    }
-    const body = await response.json();
-    const byName = new Map((body.items || []).map((p) => [p.name, p]));
-    const slots = STREAM_SLOTS.map((id) => {
-      const p = byName.get(id);
-      if (!p) return { id, ready: false };
-      return {
-        id,
-        ready: Boolean(p.ready),
-        readers: Array.isArray(p.readers) ? p.readers.length : 0,
-        tracks: p.tracks || [],
-        bytesReceived: p.bytesReceived ?? null,
-        bytesSent: p.bytesSent ?? null,
-        readyTime: p.readyTime ?? null,
-      };
-    });
-    res.json({ slots });
+    res.json({ slots: await currentStreamSlots() });
   } catch (err) {
-    res.status(502).json({ error: String(err) });
+    res.status(err.statusCode || 502).json({ error: String(err.message || err) });
   }
 });
 
@@ -308,7 +337,7 @@ app.post("/api/ai/intent", async (req, res) => {
 
 app.get("/api/next-slot", async (_req, res) => {
   try {
-    const response = await fetch("http://127.0.0.1:9997/v3/paths/list");
+    const response = await fetch(`${MEDIAMTX_API_BASE}/v3/paths/list`);
     if (!response.ok) {
       res.status(502).json({ error: `mediamtx api ${response.status}` });
       return;
@@ -341,7 +370,6 @@ app.get("/api/next-slot", async (_req, res) => {
 // ---------------------------------------------------------------------------
 const KIRI_API_KEY  = process.env.KIRI_API_KEY  || "";
 const KIRI_API_BASE = process.env.KIRI_API_BASE || "https://api.kiriengine.app/api/v1/open";
-const SCENES_DIR    = path.join(PUBLIC_DIR, "scenes");
 const KIRI_SESSIONS = new Map();   // sid → { serialize, status, plyUrl, error, createdAt }
 
 function kiriFetch(pathTail, init = {}) {
@@ -360,6 +388,160 @@ function runFfmpeg(args) {
     p.on("close", (code) => code === 0 ? resolve() : reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-500)}`)));
     p.on("error", reject);
   });
+}
+
+async function captureLiveCam(camId, outPath, durationSeconds) {
+  const inputUrl = `${MEDIAMTX_RTSP_BASE.replace(/\/$/, "")}/${camId}`;
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+  const baseArgs = [
+    "-hide_banner",
+    "-loglevel", "warning",
+    "-y",
+    "-rtsp_transport", "tcp",
+    "-i", inputUrl,
+    "-t", String(durationSeconds),
+    "-an",
+  ];
+  try {
+    await runFfmpeg([
+      ...baseArgs,
+      "-c:v", "copy",
+      "-movflags", "+faststart",
+      outPath,
+    ]);
+  } catch (copyErr) {
+    await runFfmpeg([
+      ...baseArgs,
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-tune", "zerolatency",
+      "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+      outPath,
+    ]).catch((transcodeErr) => {
+      throw new Error(`capture ${camId} failed: ${copyErr.message}; fallback failed: ${transcodeErr.message}`);
+    });
+  }
+  return outPath;
+}
+
+function makeHttpError(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+function nowCompact() {
+  return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
+}
+
+function newSessionId() {
+  return `sess-${nowCompact()}-${crypto.randomBytes(2).toString("hex")}`;
+}
+
+function readSessionIndex() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(SESSION_INDEX_PATH, "utf8"));
+    return Array.isArray(parsed.sessions) ? parsed.sessions : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSessionIndex(sessions) {
+  fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+  const tmp = `${SESSION_INDEX_PATH}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify({ sessions }, null, 2));
+  fs.renameSync(tmp, SESSION_INDEX_PATH);
+}
+
+function sessionDir(sessionId) {
+  return path.join(SESSIONS_DIR, sessionId);
+}
+
+function sessionRecordPath(sessionId) {
+  return path.join(sessionDir(sessionId), "session.json");
+}
+
+function readSession(sessionId) {
+  const record = readJsonSafe(sessionRecordPath(sessionId));
+  if (record) return record;
+  return readSessionIndex().find((session) => session.id === sessionId) || null;
+}
+
+function saveSession(session) {
+  const now = new Date().toISOString();
+  const record = { ...session, updatedAt: now };
+  if (!record.createdAt) record.createdAt = now;
+  fs.mkdirSync(sessionDir(record.id), { recursive: true });
+  fs.writeFileSync(sessionRecordPath(record.id), JSON.stringify(record, null, 2));
+
+  const sessions = readSessionIndex();
+  const idx = sessions.findIndex((item) => item.id === record.id);
+  if (idx >= 0) sessions[idx] = record;
+  else sessions.push(record);
+  sessions.sort((a, b) => String(b.createdAt || b.id).localeCompare(String(a.createdAt || a.id)));
+  writeSessionIndex(sessions);
+  return record;
+}
+
+function patchSession(sessionId, patch) {
+  const existing = readSession(sessionId);
+  if (!existing) return null;
+  return saveSession({ ...existing, ...patch });
+}
+
+function simplifyEvent(event) {
+  if (!event || !event.msg) return null;
+  let msg = String(event.msg).replace(/^\[remote\]\s*/, "").trim();
+  if (!msg || /^[-=]+$/.test(msg)) return null;
+  if (msg.length > 180) msg = `${msg.slice(0, 177)}...`;
+  return {
+    ts: event.ts || null,
+    level: event.level || "INFO",
+    msg,
+  };
+}
+
+function summarizeProgress(session, events = []) {
+  const lastEvent = [...events].reverse().find((event) => event?.msg);
+  const phase = lastEvent?.msg || session.status || "queued";
+  const label = {
+    "recording": `recording ${session.capture?.durationSeconds || DEFAULT_CAPTURE_SECONDS}s from live feeds`,
+    "uploaded": "capture complete, starting Lambda",
+    "lambda-running": "Lambda reconstruction running",
+    "completed": "splat ready",
+    "cancelled": session.error || "reset by operator",
+    "failed": session.error || "failed",
+  }[session.status] || phase;
+  const tail = events
+    .map(simplifyEvent)
+    .filter(Boolean)
+    .slice(-8);
+  return {
+    phase,
+    label,
+    updatedAt: session.updatedAt || session.createdAt || null,
+    tail,
+  };
+}
+
+function isCancelledSession(session) {
+  return session?.status === "cancelled";
+}
+
+function publicSession(session) {
+  if (!session) return null;
+  const job = session.jobId ? jobStatus(session.jobId) : null;
+  const splatUrl = session.splatUrl || job?.splatUrl || null;
+  const events = job?.workspace ? readEvents(job.workspace, 200) : [];
+  return {
+    ...session,
+    splatUrl,
+    viewerUrl: splatUrl ? `/splat/?url=${encodeURIComponent(splatUrl)}` : null,
+    job,
+    progress: summarizeProgress(session, events),
+  };
 }
 
 app.get("/api/kiri/status", (_req, res) => {
@@ -511,8 +693,10 @@ app.get("/viewer", (_req, res) => {
   res.sendFile(path.join(PUBLIC_DIR, "viewer.html"));
 });
 
-app.get("/splat-viewer", (_req, res) => {
-  res.sendFile(path.join(PUBLIC_DIR, "splat-viewer.html"));
+app.get("/splat-viewer", (req, res) => {
+  const url = typeof req.query.url === "string" ? req.query.url : "";
+  const suffix = url ? `?url=${encodeURIComponent(url)}` : "";
+  res.redirect(302, `/splat/${suffix}`);
 });
 
 function listSplatFiles(rootDir, urlRoot, sourceLabel, options = {}) {
@@ -647,9 +831,10 @@ function jobStatus(jobId) {
     workspace,
     startedAt: tracked?.startedAt || null,
     inputPaths: tracked?.inputPaths || null,
+    sessionId: tracked?.sessionId || null,
     splatUrl: fs.existsSync(splatAbs) ? splatRel : null,
     viewerUrl: fs.existsSync(splatAbs)
-      ? `/splat-viewer?url=${encodeURIComponent(splatRel)}`
+      ? `/splat/?url=${encodeURIComponent(splatRel)}`
       : null,
     result,
     error,
@@ -662,28 +847,21 @@ function addNumberArg(args, flag, value) {
   if (Number.isFinite(number)) args.push(flag, String(number));
 }
 
-app.post("/api/splat/jobs", (req, res) => {
-  const body = req.body || {};
+function startSplatJob(body = {}, options = {}) {
   const jobId = String(body.jobId || newSplatJobId()).replace(/[^A-Za-z0-9_.-]/g, "-");
   const workspace = splatWorkspaceFor(jobId);
   if (fs.existsSync(workspace)) {
-    res.status(409).json({ ok: false, error: `job ${jobId} already exists` });
-    return;
+    throw makeHttpError(409, `job ${jobId} already exists`);
   }
 
   const inputPaths = Array.isArray(body.inputPaths)
     ? body.inputPaths.map(String).filter(Boolean)
     : body.inputPath ? [String(body.inputPath)] : defaultSplatInputs();
   if (!inputPaths.length || inputPaths.some((inputPath) => !fs.existsSync(inputPath))) {
-    res.status(400).json({ ok: false, error: "inputPath/inputPaths missing or not found" });
-    return;
+    throw makeHttpError(400, "inputPath/inputPaths missing or not found");
   }
   if (!fs.existsSync(SPLAT_PYTHON)) {
-    res.status(500).json({
-      ok: false,
-      error: `Python interpreter not found at ${SPLAT_PYTHON}`,
-    });
-    return;
+    throw makeHttpError(500, `Python interpreter not found at ${SPLAT_PYTHON}`);
   }
 
   const args = [
@@ -699,14 +877,25 @@ app.post("/api/splat/jobs", (req, res) => {
   addNumberArg(args, "--image-size", body.imageSize);
   addNumberArg(args, "--temporal-neighbors", body.temporalNeighbors);
   addNumberArg(args, "--cross-view-drift", body.crossViewDrift);
-  if (body.instanceType) args.push("--instance-type", String(body.instanceType));
-  if (body.region) args.push("--region", String(body.region));
-  if (body.sshKeyName) args.push("--ssh-key-name", String(body.sshKeyName));
-  if (body.sshPrivateKey) args.push("--ssh-private-key", String(body.sshPrivateKey));
+  const instanceType = body.instanceType || process.env.SPLAT_INSTANCE_TYPE;
+  const region = body.region || process.env.SPLAT_REGION;
+  const sshKeyName = body.sshKeyName || process.env.LAMBDA_SSH_KEY_NAME;
+  const sshPrivateKey = body.sshPrivateKey || process.env.SPLAT_SSH_PRIVATE_KEY;
+  if (instanceType) args.push("--instance-type", String(instanceType));
+  if (region) args.push("--region", String(region));
+  if (sshKeyName) args.push("--ssh-key-name", String(sshKeyName));
+  if (sshPrivateKey) args.push("--ssh-private-key", String(sshPrivateKey));
   if (body.keepWarm) args.push("--keep-warm");
   if (body.noReuse) args.push("--no-reuse");
 
   fs.mkdirSync(workspace, { recursive: true });
+  fs.writeFileSync(path.join(workspace, "request.json"), JSON.stringify({
+    jobId,
+    inputPaths,
+    sessionId: options.sessionId || null,
+    requestedAt: new Date().toISOString(),
+    args,
+  }, null, 2));
   const stdoutLog = fs.openSync(path.join(workspace, "stdout.log"), "a");
   const stderrLog = fs.openSync(path.join(workspace, "stderr.log"), "a");
   const proc = spawn(SPLAT_PYTHON, args, {
@@ -721,10 +910,22 @@ app.post("/api/splat/jobs", (req, res) => {
     startedAt: new Date().toISOString(),
     workspace,
     inputPaths,
+    sessionId: options.sessionId || null,
   });
+
+  if (options.sessionId) {
+    patchSession(options.sessionId, {
+      status: "lambda-running",
+      jobId,
+      jobStatusUrl: `/api/splat/jobs/${jobId}`,
+    });
+  }
 
   proc.on("exit", (code, signal) => {
     splatJobs.delete(jobId);
+    const splatRel = `/splat-workspaces/${jobId}/result/scene.splat`;
+    const splatAbs = path.join(workspace, "result", "scene.splat");
+    const resultPath = path.join(workspace, "result.json");
     if (code !== 0 && !fs.existsSync(path.join(workspace, "result.json"))) {
       fs.writeFileSync(
         path.join(workspace, "error.json"),
@@ -737,9 +938,250 @@ app.post("/api/splat/jobs", (req, res) => {
         }, null, 2),
       );
     }
+    if (options.sessionId) {
+      const existingSession = readSession(options.sessionId);
+      if (isCancelledSession(existingSession)) return;
+      const result = readJsonSafe(resultPath);
+      const error = readJsonSafe(path.join(workspace, "error.json"));
+      const missingSplat = code === 0 && !fs.existsSync(splatAbs);
+      patchSession(options.sessionId, {
+        status: code === 0 && fs.existsSync(splatAbs) ? "completed" : "failed",
+        completedAt: new Date().toISOString(),
+        splatUrl: fs.existsSync(splatAbs) ? splatRel : null,
+        error: error?.error || error?.stderrTail || (missingSplat ? "splat job completed without scene.splat" : `splat job exited ${code ?? signal}`),
+        result,
+      });
+    }
   });
 
-  res.json({ ok: true, jobId, workspace, inputPaths, pid: proc.pid, statusUrl: `/api/splat/jobs/${jobId}` });
+  return { ok: true, jobId, workspace, inputPaths, pid: proc.pid, statusUrl: `/api/splat/jobs/${jobId}` };
+}
+
+app.post("/api/splat/jobs", (req, res) => {
+  try {
+    res.json(startSplatJob(req.body || {}));
+  } catch (err) {
+    res.status(err.statusCode || 500).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+function startLambdaSessionJob(sessionId, inputPaths, options = {}) {
+  return startSplatJob({
+    jobId: `job-${sessionId}`,
+    inputPaths,
+    iterations: options.iterations ?? 1000,
+    timestampsPerFeed: options.timestampsPerFeed ?? 2,
+    maxImages: options.maxImages ?? 12,
+    longEdge: options.longEdge ?? 960,
+    imageSize: options.imageSize ?? 512,
+    temporalNeighbors: options.temporalNeighbors ?? 1,
+    crossViewDrift: options.crossViewDrift ?? 0,
+    instanceType: options.instanceType,
+    region: options.region,
+    sshKeyName: options.sshKeyName,
+    keepWarm: options.keepWarm ?? DEFAULT_SPLAT_KEEP_WARM,
+    noReuse: options.noReuse,
+  }, { sessionId });
+}
+
+async function captureLiveSession(sessionId, cams, durationSeconds, options = {}) {
+  if (isCancelledSession(readSession(sessionId))) return;
+  const inputDir = path.join(sessionDir(sessionId), "inputs");
+  const startedAt = new Date().toISOString();
+  patchSession(sessionId, {
+    status: "recording",
+    capture: { durationSeconds, startedAt, source: "mediamtx-rtsp" },
+  });
+
+  try {
+    const clips = await Promise.all(cams.map(async (cam) => {
+      const filePath = path.join(inputDir, `${cam}.mp4`);
+      await captureLiveCam(cam, filePath, durationSeconds);
+      return { cam, path: filePath, mimeType: "video/mp4" };
+    }));
+    if (isCancelledSession(readSession(sessionId))) return;
+    clips.sort((a, b) => a.cam.localeCompare(b.cam));
+    const inputPaths = clips.map((clip) => clip.path);
+    patchSession(sessionId, {
+      status: "uploaded",
+      capture: {
+        durationSeconds,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        source: "mediamtx-rtsp",
+      },
+      cams: clips.map((clip) => clip.cam),
+      inputPaths,
+    });
+    startLambdaSessionJob(sessionId, inputPaths, options);
+  } catch (err) {
+    if (isCancelledSession(readSession(sessionId))) return;
+    patchSession(sessionId, {
+      status: "failed",
+      error: String(err.message || err),
+      completedAt: new Date().toISOString(),
+    });
+  }
+}
+
+app.get("/api/sessions", (_req, res) => {
+  const sessions = readSessionIndex().map(publicSession);
+  res.json({ ok: true, sessions });
+});
+
+app.get("/api/sessions/:id", (req, res) => {
+  const session = publicSession(readSession(req.params.id));
+  if (!session) {
+    res.status(404).json({ ok: false, error: "no such session" });
+    return;
+  }
+  const events = session.job?.workspace ? readEvents(session.job.workspace, 500) : [];
+  res.json({ ok: true, session, events });
+});
+
+function terminateTrackedJob(jobId, signal = "SIGTERM") {
+  const tracked = splatJobs.get(jobId);
+  if (!tracked || tracked.proc.exitCode !== null) return false;
+  try {
+    tracked.proc.kill(signal);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+app.post("/api/sessions/:id/cancel", (req, res) => {
+  const existing = readSession(req.params.id);
+  if (!existing) {
+    res.status(404).json({ ok: false, error: "no such session" });
+    return;
+  }
+  const session = patchSession(req.params.id, {
+    status: "cancelled",
+    cancelledAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    error: String(req.body?.reason || "reset by operator").slice(0, 200),
+  });
+  const killed = existing.jobId ? terminateTrackedJob(existing.jobId) : false;
+  res.json({ ok: true, killed, session: publicSession(session) });
+});
+
+app.post("/api/sessions/lambda/record-start", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const requestedCams = Array.isArray(body.cams)
+      ? body.cams.map(String).filter((id) => STREAM_SLOTS.includes(id))
+      : [];
+    const slots = await currentStreamSlots();
+    const ready = slots.filter((slot) => slot.ready).map((slot) => slot.id);
+    const cams = requestedCams.length ? requestedCams.filter((id) => ready.includes(id)) : ready;
+    if (cams.length < 2) {
+      res.status(400).json({
+        ok: false,
+        error: "at least two live streams are required before mapping",
+        ready,
+      });
+      return;
+    }
+
+    const durationSeconds = Math.max(5, Math.min(120, Number(body.durationSeconds || DEFAULT_CAPTURE_SECONDS)));
+    const sessionId = newSessionId();
+    const session = saveSession({
+      id: sessionId,
+      title: String(body.title || `Mapping ${new Date().toLocaleString()}`).slice(0, 160),
+      status: "recording",
+      createdAt: new Date().toISOString(),
+      cams,
+      inputPaths: [],
+      capture: {
+        durationSeconds,
+        startedAt: new Date().toISOString(),
+        source: "mediamtx-rtsp",
+      },
+      splatUrl: null,
+      viewerUrl: null,
+      error: null,
+    });
+
+    res.json({ ok: true, session: publicSession(session) });
+    setImmediate(() => {
+      captureLiveSession(sessionId, cams, durationSeconds, body.options || {});
+    });
+  } catch (err) {
+    res.status(err.statusCode || 502).json({ ok: false, error: String(err.message || err) });
+  }
+});
+
+app.post("/api/sessions/lambda/start", (req, res) => {
+  const sessionId = newSessionId();
+  const dir = sessionDir(sessionId);
+  const inputDir = path.join(dir, "inputs");
+  fs.mkdirSync(inputDir, { recursive: true });
+
+  const clips = [];
+  const writes = [];
+  let options = {};
+  let title = "";
+  let aborted = false;
+  const bb = Busboy({ headers: req.headers, limits: { fileSize: 500 * 1024 * 1024, files: 8 } });
+  const fail = (code, message) => {
+    if (aborted) return;
+    aborted = true;
+    patchSession(sessionId, { status: "failed", error: message });
+    try { res.status(code).json({ ok: false, error: message, sessionId }); } catch {}
+  };
+
+  bb.on("field", (field, value) => {
+    if (field === "title") title = String(value || "").slice(0, 160);
+    if (field === "options") {
+      try { options = JSON.parse(value); } catch {}
+    }
+  });
+
+  bb.on("file", (field, stream, info) => {
+    if (!/^cam[1-4]$/.test(field)) {
+      stream.resume();
+      return;
+    }
+    const mime = (info.mimeType || "").toLowerCase();
+    const ext = mime.includes("mp4") ? "mp4" : mime.includes("matroska") ? "mkv" : "webm";
+    const filePath = path.join(inputDir, `${field}.${ext}`);
+    clips.push({ cam: field, path: filePath, mimeType: info.mimeType || "" });
+    writes.push(streamPipeline(stream, fs.createWriteStream(filePath)));
+  });
+
+  bb.on("close", async () => {
+    if (aborted) return;
+    try {
+      await Promise.all(writes);
+      clips.sort((a, b) => a.cam.localeCompare(b.cam));
+      if (clips.length < 2) {
+        fail(400, "at least two live camera clips are required for Lambda reconstruction");
+        return;
+      }
+
+      const session = saveSession({
+        id: sessionId,
+        title: title || `Mapping ${sessionId}`,
+        status: "uploaded",
+        createdAt: new Date().toISOString(),
+        cams: clips.map((clip) => clip.cam),
+        inputPaths: clips.map((clip) => clip.path),
+        splatUrl: null,
+        viewerUrl: null,
+        error: null,
+      });
+
+      const job = startLambdaSessionJob(sessionId, clips.map((clip) => clip.path), options);
+
+      res.json({ ok: true, session: publicSession(readSession(sessionId)), job });
+    } catch (err) {
+      fail(err.statusCode || 502, String(err.message || err));
+    }
+  });
+
+  bb.on("error", (err) => fail(400, `multipart error: ${err.message}`));
+  req.pipe(bb);
 });
 
 app.get("/api/splat/jobs", (_req, res) => {
@@ -790,6 +1232,11 @@ app.get("/dev-cert.pem", (_req, res) => {
 });
 
 app.get("/phone-publish", (req, res) => {
+  const query = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
+  res.redirect(302, `/iphone-safari${query}`);
+});
+
+app.get("/phone", (req, res) => {
   const query = req.url.includes("?") ? req.url.slice(req.url.indexOf("?")) : "";
   res.redirect(302, `/iphone-safari${query}`);
 });
@@ -871,34 +1318,39 @@ app.get("/", (_req, res) => {
   res.redirect("/viewer");
 });
 
-if (!fs.existsSync(CERT_PATH) || !fs.existsSync(KEY_PATH)) {
+if (USE_HTTPS && (!fs.existsSync(CERT_PATH) || !fs.existsSync(KEY_PATH))) {
   console.error("Missing TLS certificate files.");
   console.error("Run: ./scripts/generate-dev-cert.sh");
   process.exit(1);
 }
 
-const credentials = {
-  cert: fs.readFileSync(CERT_PATH),
-  key: fs.readFileSync(KEY_PATH),
-};
+const dashboardServer = USE_HTTPS
+  ? https.createServer({
+      cert: fs.readFileSync(CERT_PATH),
+      key: fs.readFileSync(KEY_PATH),
+    }, app)
+  : http.createServer(app);
 
-const httpsServer = https.createServer(credentials, app);
-httpsServer.on("upgrade", (req, socket, head) => {
+dashboardServer.on("upgrade", (req, socket, head) => {
   if (req.url && req.url.startsWith("/api/pi/cam1/mavlink")) {
     mavlinkProxy.upgrade(req, socket, head);
   }
 });
-httpsServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Dashboard listening on https://0.0.0.0:${PORT}`);
+
+dashboardServer.listen(PORT, "0.0.0.0", () => {
+  const protocol = USE_HTTPS ? "https" : "http";
+  console.log(`Dashboard listening on ${protocol}://0.0.0.0:${PORT}`);
 });
 
-http
-  .createServer((req, res) => {
-    const host = (req.headers.host || "").replace(/:\d+$/, "");
-    const location = `https://${host}:${PORT}${req.url || "/"}`;
-    res.writeHead(308, { Location: location });
-    res.end();
-  })
-  .listen(HTTP_REDIRECT_PORT, "0.0.0.0", () => {
-    console.log(`HTTP redirect listening on http://0.0.0.0:${HTTP_REDIRECT_PORT}`);
-  });
+if (USE_HTTPS) {
+  http
+    .createServer((req, res) => {
+      const host = (req.headers.host || "").replace(/:\d+$/, "");
+      const location = `https://${host}:${PORT}${req.url || "/"}`;
+      res.writeHead(308, { Location: location });
+      res.end();
+    })
+    .listen(HTTP_REDIRECT_PORT, "0.0.0.0", () => {
+      console.log(`HTTP redirect listening on http://0.0.0.0:${HTTP_REDIRECT_PORT}`);
+    });
+}

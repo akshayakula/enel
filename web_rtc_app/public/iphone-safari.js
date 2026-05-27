@@ -102,7 +102,7 @@ async function publishToStream(streamId) {
   } catch (error) {
     console.error(error);
     setPublishStatus("Publish failed");
-    setCameraStatus("Camera or WHIP error", "error");
+    setCameraStatus("Camera or publisher error", "error");
     stopButton.disabled = true;
   }
 }

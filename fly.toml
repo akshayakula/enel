@@ -1,0 +1,66 @@
+app = "enel-stream"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  ENEL_HTTPS = "0"
+  DATA_DIR = "/data"
+  RECORDINGS_DIR = "/data/recordings"
+  EXPORTS_DIR = "/data/exports/compiled"
+  SCENES_DIR = "/data/scenes"
+  SESSIONS_DIR = "/data/sessions"
+  SPLAT_WORKSPACES_DIR = "/data/splat-workspaces"
+  SPLAT_PYTHON = "/app/video_to_gaussian_splat/.venv/bin/python"
+  MEDIAMTX_API_BASE = "http://127.0.0.1:9997"
+  MEDIAMTX_RTSP_BASE = "rtsp://127.0.0.1:8554"
+  LAMBDA_CAPTURE_SECONDS = "90"
+  SPLAT_KEEP_WARM = "1"
+
+[[mounts]]
+  source = "data"
+  destination = "/data"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "3s"
+    method = "get"
+    path = "/health"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8554
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 8554
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8189
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 8189

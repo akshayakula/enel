@@ -1,31 +1,32 @@
 # enel
 
-Minimal multi-camera WebRTC wall for 4 Raspberry Pis that publish with WHIP on the same LAN.
+Minimal multi-camera WebRTC wall for 4 Raspberry Pis that publish H.264 over RTSP/TCP to MediaMTX.
 
 This version assumes:
 
 1. The laptop runs MediaMTX as the actual media server.
-2. Each Raspberry Pi publishes video-only to MediaMTX with a WHIP URL.
+2. Each Raspberry Pi publishes video-only to MediaMTX with an RTSP/TCP URL.
 3. A separate iPhone Safari app can also publish video-only for smoke tests.
 4. A small Node dashboard shows `cam1` through `cam4` simultaneously in a 2x2 grid.
 
-This is a better fit than custom browser-to-browser signaling because WHIP ingest already matches how the Pis publish, and MediaMTX also gives us a cleaner path to recording and later MP4-based reconstruction work.
+This is a better fit than custom browser-to-browser signaling because MediaMTX handles RTSP ingest, WebRTC playback, and recording in one process, which gives us a cleaner path to MP4-based reconstruction work.
 
-According to the current official MediaMTX docs, WHIP publishing uses URLs like `http://host:8889/mystream/whip`, browser playback is available at `http://host:8889/mystream`, and WebRTC connectivity on LAN setups often requires exposing port `8889` plus UDP or TCP `8189`. Sources:
+According to the current official MediaMTX docs, RTSP publishing uses URLs like `rtsp://host:8554/mystream`, browser playback is available through WebRTC/WHEP, and WebRTC connectivity on LAN setups often requires exposing TCP or UDP `8189`. Sources:
 
-- [MediaMTX: WebRTC clients / publish](https://mediamtx.org/docs/publish/webrtc-clients)
+- [MediaMTX: RTSP clients / publish](https://mediamtx.org/docs/publish/rtsp-clients)
 - [MediaMTX: Embed streams in a website](https://mediamtx.org/docs/features/embed-streams-in-a-website)
 - [MediaMTX: WebRTC-specific features](https://mediamtx.org/docs/features/webrtc-specific-features)
 
 ## Architecture
 
-- `scripts/start-mediamtx.sh` runs MediaMTX directly on the laptop.
+- `scripts/start-mediamtx.sh` runs MediaMTX directly on the laptop for local development.
+- `fly.toml`, `Dockerfile`, and `fly/mediamtx.yml` deploy Node + MediaMTX together on Fly.io.
 - `mediamtx/mediamtx.yml` reserves the `cam1` to `cam4` paths.
 - `mediamtx/mediamtx.yml` also records all streams to disk as fMP4 and exposes the playback server on port `9996`.
 - `server.js` serves the dashboard plus two separate publisher apps on port `3000`.
-- `web_rtc_app/public/viewer.html` embeds the four MediaMTX WebRTC viewers.
-- `web_rtc_app/public/iphone-safari.html` is the dedicated iPhone Safari video-only publisher.
-- `web_rtc_app/public/raspi.html` is the dedicated Raspberry Pi WHIP setup app.
+- `web_rtc_app/public/viewer.html` embeds the four MediaMTX WebRTC viewers, starts server-side live capture, starts Lambda splat jobs, and lists previous mapping sessions.
+- `web_rtc_app/public/iphone-safari.html` is the dedicated phone video-only publisher.
+- `web_rtc_app/public/raspi.html` is the dedicated Raspberry Pi RTSP setup app.
 
 ## Quick start
 
@@ -59,19 +60,66 @@ Open the dashboard on the laptop:
 https://LAPTOP_IP:3000/viewer
 ```
 
-Open the Raspberry Pi app if you want the exact WHIP URLs:
+Open the Raspberry Pi app if you want the exact RTSP URLs:
 
 ```text
 https://LAPTOP_IP:3000/raspi
 ```
 
-Each Raspberry Pi should publish to one of these WHIP URLs:
+Each Raspberry Pi should publish to one of these RTSP URLs:
 
 ```text
-http://LAPTOP_IP:8889/cam1/whip
-http://LAPTOP_IP:8889/cam2/whip
-http://LAPTOP_IP:8889/cam3/whip
-http://LAPTOP_IP:8889/cam4/whip
+rtsp://LAPTOP_IP:8554/cam1
+rtsp://LAPTOP_IP:8554/cam2
+rtsp://LAPTOP_IP:8554/cam3
+rtsp://LAPTOP_IP:8554/cam4
+```
+
+## Fly deployment
+
+The production app is deployed at:
+
+```text
+https://enel-stream.fly.dev/viewer
+```
+
+Phones can join as temporary camera publishers at:
+
+```text
+https://enel-stream.fly.dev/phone
+```
+
+The Pi publisher should target the dedicated Fly IPv4 on RTSP/TCP:
+
+```text
+SERVER_HOST=137.66.49.231
+RTSP_PORT=8554
+STREAM_ID=cam1   # cam1..cam4 per unit
+```
+
+The Fly machine also exposes WebRTC ICE-over-TCP on `8189`. The browser still talks to MediaMTX through the dashboard's `/mediamtx` proxy, so the operator only needs the HTTPS dashboard URL.
+
+When **begin mapping** is clicked, the server captures every live `cam1`-`cam4`
+MediaMTX path over local RTSP/TCP, stores the clips in the session directory,
+starts the Lambda workflow, and streams session progress/events back into the
+mapping sessions list.
+
+Mutable deployment state lives on the Fly volume under `/data`:
+
+- `/data/recordings` for MediaMTX fMP4 recordings.
+- `/data/sessions` for mapping-session manifests and uploaded clips.
+- `/data/splat-workspaces` for Lambda job logs and `result/scene.splat`.
+- `/data/scenes` for standalone viewer assets.
+
+Required Fly secrets:
+
+```bash
+flyctl secrets set \
+  LAMBDA_API_KEY=... \
+  LAMBDA_SSH_KEY_NAME='...' \
+  LAMBDA_SSH_PRIVATE_KEY_B64="$(base64 < ~/.ssh/<lambda-key> | tr -d '\n')" \
+  MTX_WEBRTCADDITIONALHOSTS=137.66.49.231 \
+  --app enel-stream
 ```
 
 ## Important setup note
@@ -113,13 +161,13 @@ For iPhone Safari publishing, generate the local certificate before starting the
 ./scripts/generate-dev-cert.sh
 ```
 
-Then open:
+Then open the phone publisher:
 
 ```text
-https://LAPTOP_IP:3000/iphone-safari?streamId=cam1
+https://LAPTOP_IP:3000/phone?streamId=cam1
 ```
 
-This app publishes video only. It requests camera access without audio and posts directly to the local WHIP endpoint through the secure dashboard origin.
+This app publishes video only into the same `cam1` through `cam4` MediaMTX slots as the Pis. Browser phones publish through the dashboard's WebRTC publisher path; the mapping workflow records from MediaMTX afterward, so phone and Pi streams are handled the same way by Lambda.
 
 If the iPhone does not trust the local certificate yet, download it from:
 
@@ -135,7 +183,7 @@ Use:
 https://LAPTOP_IP:3000/raspi
 ```
 
-to see the four assigned WHIP ingest endpoints for `cam1` through `cam4`. Configure each Pi to publish video only and omit audio entirely.
+to see the four assigned RTSP ingest endpoints for `cam1` through `cam4`. Configure each Pi to publish video only and omit audio entirely.
 
 ## Stopping services
 

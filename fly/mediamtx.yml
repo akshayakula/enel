@@ -1,0 +1,28 @@
+# MediaMTX config for the Fly.io deploy.
+# RTSP ingest and WebRTC ICE both use raw TCP. The public IPv4 should be
+# supplied through MTX_WEBRTCADDITIONALHOSTS after `fly ips allocate-v4`.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+playback: yes
+playbackAddress: 127.0.0.1:9996
+
+rtspAddress: :8554
+
+webrtcAddress: :8889
+webrtcLocalUDPAddress: ''
+webrtcLocalTCPAddress: :8189
+
+pathDefaults:
+  record: yes
+  recordPath: /data/recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordSegmentDuration: 1m
+  recordDeleteAfter: 24h
+
+paths:
+  cam1:
+  cam2:
+  cam3:
+  cam4:
