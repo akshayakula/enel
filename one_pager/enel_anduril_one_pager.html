@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Exark ENEL For Anduril</title>
+    <style>
+      @page {
+        size: letter;
+        margin: 0;
+      }
+
+      :root {
+        --bg: #030404;
+        --ink: #f3f1ec;
+        --muted: #aaa69e;
+        --dim: #706b63;
+        --rule: rgba(243, 241, 236, 0.22);
+        --soft: rgba(243, 241, 236, 0.055);
+        --green: #7ee78d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #111;
+        color: var(--ink);
+        font-family: Inter, "Helvetica Neue", Arial, sans-serif;
+      }
+
+      a {
+        color: var(--ink);
+        text-decoration: none;
+      }
+
+      .page {
+        display: flex;
+        flex-direction: column;
+        width: 8.5in;
+        height: 11in;
+        margin: 0 auto;
+        padding: 0.42in 0.54in 0.34in;
+        overflow: hidden;
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 15%),
+          radial-gradient(circle at 84% 16%, rgba(126, 231, 141, 0.1), transparent 24%),
+          var(--bg);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--rule);
+        padding-bottom: 0.13in;
+        margin-bottom: 0.2in;
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 0.24in;
+      }
+
+      .brand strong {
+        font-size: 24px;
+        line-height: 1;
+        font-weight: 300;
+      }
+
+      .brand span,
+      .brief {
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 0;
+        max-width: 6.7in;
+        font-size: 42px;
+        line-height: 0.98;
+        font-weight: 300;
+        text-transform: uppercase;
+      }
+
+      .dek {
+        margin: 0.13in 0 0.12in;
+        max-width: 6.9in;
+        color: var(--muted);
+        font-size: 12.7px;
+        line-height: 1.32;
+      }
+
+      .live-link {
+        margin: 0 0 0.18in;
+        color: var(--dim);
+        font-size: 9.4px;
+        line-height: 1.2;
+        text-transform: uppercase;
+      }
+
+      .content {
+        display: grid;
+        grid-template-columns: 2.25in 1fr;
+        gap: 0.28in;
+        align-items: start;
+        border-top: 1px solid var(--rule);
+        padding-top: 0.16in;
+        flex: 1;
+      }
+
+      .hero {
+        margin: 0;
+      }
+
+      .hero img {
+        display: block;
+        width: 2.25in;
+        height: 6.45in;
+        object-fit: cover;
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        background: #050606;
+      }
+
+      .caption {
+        margin-top: 0.08in;
+        color: var(--dim);
+        font-size: 8.3px;
+        line-height: 1.28;
+        text-transform: uppercase;
+      }
+
+      .caption span {
+        display: block;
+        margin-top: 0.04in;
+      }
+
+      .right {
+        display: grid;
+        gap: 0.17in;
+      }
+
+      .block {
+        border-top: 1px solid var(--rule);
+        padding-top: 0.105in;
+      }
+
+      h2 {
+        margin: 0 0 0.06in;
+        font-size: 13px;
+        line-height: 1;
+        font-weight: 500;
+        text-transform: uppercase;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 10.7px;
+        line-height: 1.34;
+      }
+
+      .flow {
+        color: var(--ink);
+        font-size: 9.1px;
+        line-height: 1.25;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .flow i {
+        color: var(--green);
+        font-style: normal;
+        margin: 0 0.035in;
+      }
+
+      .path-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0;
+        border-top: 1px solid var(--rule);
+        border-left: 1px solid var(--rule);
+      }
+
+      .path {
+        min-height: 0.86in;
+        padding: 0.095in 0.1in 0.085in;
+        border-right: 1px solid var(--rule);
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .path b {
+        display: block;
+        color: var(--ink);
+        font-size: 9.6px;
+        line-height: 1.05;
+        font-weight: 500;
+        text-transform: uppercase;
+      }
+
+      .path span {
+        display: block;
+        margin-top: 0.04in;
+        color: var(--muted);
+        font-size: 8.4px;
+        line-height: 1.23;
+      }
+
+      .ask-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0;
+        border-top: 1px solid var(--rule);
+        border-left: 1px solid var(--rule);
+      }
+
+      .ask-grid.three {
+        grid-template-columns: 1fr;
+      }
+
+      .ask {
+        min-height: 0.68in;
+        padding: 0.075in 0.09in 0.07in;
+        border-right: 1px solid var(--rule);
+        border-bottom: 1px solid var(--rule);
+      }
+
+      .ask-grid.three .ask {
+        min-height: 0.82in;
+      }
+
+      .ask b {
+        display: block;
+        color: var(--ink);
+        font-size: 9.6px;
+        line-height: 1.05;
+        font-weight: 500;
+        text-transform: uppercase;
+      }
+
+      .ask span {
+        display: block;
+        margin-top: 0.04in;
+        color: var(--muted);
+        font-size: 8.4px;
+        line-height: 1.23;
+      }
+
+      .footer {
+        display: grid;
+        grid-template-columns: 3.05in 1.8in 1.95in;
+        justify-content: space-between;
+        gap: 0.14in;
+        margin-top: 0.16in;
+        border-top: 1px solid var(--rule);
+        padding-top: 0.09in;
+        color: var(--dim);
+        font-size: 7.8px;
+        line-height: 1.15;
+      }
+
+      .footer span:nth-child(2) {
+        color: var(--ink);
+        white-space: nowrap;
+      }
+
+      @media print {
+        body {
+          background: var(--bg);
+        }
+
+        .page {
+          margin: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="topbar">
+        <div class="brand"><strong>Exark</strong><span>Industries</span></div>
+        <div class="brief">Anduril Brief</div>
+      </header>
+
+      <h1>Lattice-Integrated Fast Splatting</h1>
+      <p class="dek">
+        Exark is already integrated with Lattice. The Lattice SDK routes camera feeds and sensor context into ENEL, Exark's splat service, creating fast 3D scene outputs directly inside the Lattice operating workflow.
+      </p>
+      <p class="live-link">Live viewer: <a href="https://enel-stream.fly.dev/viewer">https://enel-stream.fly.dev/viewer</a></p>
+
+      <section class="content">
+        <figure class="hero" aria-label="5/27 Gallup building splat result">
+          <img src="assets/job-sess-20260527140000-8776/splat_hero_portrait.jpg" alt="Gaussian splat of the Gallup building interior in Washington, DC" />
+          <figcaption class="caption">
+            Publicly accessible Gallup building interior, Washington, DC
+            <span>Mapping 5/27/2026, 10:00 AM</span>
+            <span>90s capture window - 2 camera feeds</span>
+          </figcaption>
+        </figure>
+
+        <div class="right">
+          <section class="block">
+            <h2>Current Fit</h2>
+            <p>
+              Lattice already centralizes video and sensor context. ENEL turns those inputs into a navigable scene layer that can sit inside the existing Lattice workflow.
+            </p>
+          </section>
+
+          <section class="block">
+            <h2>Defense Applications</h2>
+            <div class="path-grid">
+              <div class="path">
+                <b>Facility Awareness</b>
+                <span>Turn available feeds into a shared 3D view of a base, facility, or critical infrastructure site.</span>
+              </div>
+              <div class="path">
+                <b>Mission Planning</b>
+                <span>Give operators spatial context for pre-briefs, route review, and remote site familiarization.</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="block">
+            <h2>Lattice Path</h2>
+            <p>
+              The integration uses Lattice-accessible feeds and sensors as the input, ENEL as the splat service, and Lattice as the operating environment for the resulting scene.
+            </p>
+          </section>
+
+          <section class="block">
+            <h2>Flow</h2>
+            <div class="flow">
+              Lattice SDK <i>&gt;</i> Camera feeds + sensors <i>&gt;</i> ENEL splat service <i>&gt;</i> Lattice scene layer
+            </div>
+          </section>
+
+          <section class="block">
+            <h2>The Ask</h2>
+            <div class="ask-grid three">
+              <div class="ask">
+                <b>Anduril Lattice Partner</b>
+                <span>Sponsor Exark into the Lattice Partner Program and identify the product owner for scene-layer review.</span>
+              </div>
+              <div class="ask">
+                <b>Mentor-Protege MPP Intro</b>
+                <span>Introduce Exark to a potential mentor for a mentor-protege or MPP relationship tied to Lattice-relevant pilots.</span>
+              </div>
+              <div class="ask">
+                <b>Pre-Sales Demos</b>
+                <span>Use ENEL in Anduril pre-sales and customer walkthroughs where fast 3D scene context helps communicate Lattice value.</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <span>Akshay - Founder &amp; CEO - akshay@exark.ai<br />Puneet Velidi - Founder &amp; CTO - puneet@exark.ai</span>
+        <span><a href="https://enel-stream.fly.dev/viewer">https://enel-stream.fly.dev/viewer</a></span>
+        <span>CAGE 13GP2 - UEI MU9YZL34ZB83 - exark.ai</span>
+      </footer>
+    </main>
+  </body>
+</html>
